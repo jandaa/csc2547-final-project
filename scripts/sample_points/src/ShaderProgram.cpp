@@ -2,7 +2,7 @@
 
 #include <pangolin/gl/glsl.h>
 
-constexpr const char *shaderText = R"Shader(
+constexpr const char* shaderText = R"Shader(
 @start vertex
 #version 330 core
 
@@ -141,11 +141,10 @@ void main(){
 )Shader";
 
 pangolin::GlSlProgram GetShaderProgram() {
-
   pangolin::GlSlProgram program;
 
   program.AddShader(pangolin::GlSlAnnotatedShader, shaderText);
   program.Link();
 
-  return std::move(program);
+  return program;
 }
