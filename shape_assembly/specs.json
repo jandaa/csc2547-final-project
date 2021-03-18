@@ -1,9 +1,9 @@
 {
     "Description" : "Hand-object together, test point cloud input",
-    "DataSource" : "",
+    "DataSource" : "./output",
     "ImageSource" : "",
-    "TrainSplit" : "",
-    "ValSplit" : "",
+    "TrainSplit" : "./shape_assembly/train_split.json",
+    "ValSplit" : "./shape_assembly/test_split.json",
     "ModelType" : "PC_2encoder1decoder_VAE",
     "HandBranch" : true,
     "ObjectBranch" : true,
@@ -45,8 +45,8 @@
 	    "Interval" : 200
         },
     "SamplesPerScene" : 20000,
-    "ScenesPerBatch" : 80,
-    "DataLoaderThreads" : 24,
+    "ScenesPerBatch" : 1,
+    "DataLoaderThreads" : 1,
     "ClampingDistance" : 0.05,
     "CheckFile" : false
 }
