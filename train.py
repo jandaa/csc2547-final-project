@@ -9,6 +9,7 @@ import logging
 import numpy as np
 import json
 import time
+from pathlib import Path
 
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, models, transforms
@@ -17,7 +18,7 @@ from torch import distributions as dist
 import utils
 import networks.model as arch
 
-import reconstruct
+# import reconstruct
 # import evaluate
 
 class LearningRateSchedule:
@@ -742,6 +743,38 @@ def main_function(experiment_directory, continue_from, batch_split):
 
     writer.close()
 
+def shape_assembly_main_function(experiment_directory, continue_from, batch_split):
+
+    logging.debug("running " + experiment_directory)
+
+    print(experiment_directory)
+
+    specs = utils.misc.load_experiment_specifications(experiment_directory)
+
+    logging.info("Experiment description: \n" + specs["Description"])
+
+    data_source = Path(specs["DataSource"])
+    train_split_file = specs["TrainSplit"]
+    subsample = specs["SamplesPerScene"]
+    scene_per_batch = specs["ScenesPerBatch"]
+    num_data_loader_threads = get_spec_with_default(specs, "DataLoaderThreads", 8)
+    val_split_file = get_spec_with_default(specs, "ValSplit", None)
+
+    with open(train_split_file, "r") as f:
+        train_split = json.load(f)
+
+    sdf_dataset = utils.data.SDFAssemblySamples(data_source, train_split, subsample)
+
+    sdf_loader = data_utils.DataLoader(
+        sdf_dataset,
+        batch_size=scene_per_batch,
+        shuffle=True,
+        num_workers=num_data_loader_threads,
+        drop_last=True
+    )
+
+    for i, (part1_surface_points, part2_surface_points, part1_sdf_samples, part2_sdf_samples, transform) in enumerate(sdf_loader):
+        print(i)
 
 if __name__ == "__main__":
 
@@ -781,4 +814,7 @@ if __name__ == "__main__":
 
     utils.configure_logging(args)
     
-    main_function(args.experiment_directory, args.continue_from, int(args.batch_split))
+    shape_assembly_main_function(args.experiment_directory, args.continue_from, int(args.batch_split))
+    # main_function(args.experiment_directory, args.continue_from, int(args.batch_split))
+
+    

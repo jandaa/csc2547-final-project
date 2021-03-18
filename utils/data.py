@@ -162,7 +162,7 @@ def unpack_sdf_samples_shape_assembly(filename, subsample=None, hand=True, clamp
     
     #this is redundant but is legacy from the original code
     xyz_pos = pos_tensor[:, :3]
-    psdf_pos = pos_tensor[:, 3].unsqueeze(1)
+    sdf_pos = pos_tensor[:, 3].unsqueeze(1)
     pos_tensor = torch.cat([xyz_pos, sdf_pos], 1)
 
     xyz_neg = neg_tensor[:, :3]
@@ -182,11 +182,6 @@ def unpack_sdf_samples_shape_assembly(filename, subsample=None, hand=True, clamp
     sample_pos = torch.index_select(pos_tensor, 0, random_pos)
     sample_neg = torch.index_select(neg_tensor, 0, random_neg)
 
-    # label
-    sample_pos_lab = torch.index_select(lab_pos_tensor, 0, random_pos)
-    sample_neg_lab = torch.index_select(lab_neg_tensor, 0, random_neg)
-
-    
     samples = torch.cat([sample_pos, sample_neg], 0)
 
     return samples
@@ -249,6 +244,7 @@ def get_instance_filenames(data_source, input_type, encoder_input_source, split,
     return npzfiles_hand, npzfiles_obj, normalization_params, encoder_input_files
 
 def get_shape_assembly_filenames(data_source: Path, scenes):
+
     part1_filenames = [
         data_source / scene / "part1.npz"
         for scene in scenes
@@ -454,10 +450,16 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
         part2_surface_points = get_negative_surface_points(part2_filename, self.pc_sample)
 
-        part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, num_sample, clamp=self.clamp, filter_dist=self.filter_dist)
-        part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, num_sample, clamp=self.clamp, filter_dist=self.filter_dist)
+        part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
+        part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
         
-        return part1_sdf_samples, part1_sdf_samples, transform
+        return (
+            part1_surface_points, 
+            part2_surface_points,
+            part1_sdf_samples, 
+            part2_sdf_samples, 
+            transform
+        )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):
     object_center = encoder_input_obj.mean(dim=0)
