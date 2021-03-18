@@ -271,6 +271,155 @@ class ModelTwoEncodersOneDecoderVAE(nn.Module):
 
         return latent
 
+class ModelShapeAssemblyEncoderDecoderVAE(nn.Module):
+    def __init__(
+        self, 
+        encoder_part1, 
+        encoder_part2, 
+        decoder, 
+        nb_classes, 
+        num_sdf_samp_per_scene
+    ):
+        super(ModelTwoEncodersOneDecoderVAE, self).__init__()
+        self.encoder_part1 = encoder_part1
+        self.encoder_part2 = encoder_part2
+        self.decoder = decoder
+
+        self.num_class = nb_classes
+        self.num_sdf_samp_per_scene = num_sdf_samp_per_scene
+
+    def forward(self, part1_points, part2_points, xyzs):
+        part1_encoding = self.encoder_obj(part1_points)
+        part2_encoding = self.encoder_obj(part2_points)
+
+        latent_part1 = part1_encoding.repeat_interleave(self.num_samp_per_scene, dim=0)
+        latent_part2 = part2_encoding.repeat_interleave(self.num_samp_per_scene, dim=0)
+
+        latent = torch.cat([latent_part1, latent_part2], 1)
+        decoder_inputs = torch.cat([latent, xyzs], 1)
+
+        return self.decoder(decoder_inputs)
+
+class ShapeAssemblyDecoder(nn.Module):
+    def __init__(
+        self,
+        latent_size,
+        dims,
+        num_class,
+        dropout=None,
+        dropout_prob=0.0,
+        norm_layers=(),
+        latent_in=(),
+        weight_norm=False,
+        xyz_in_all=None,
+        use_tanh=False,
+        latent_dropout=False,
+        use_classifier=False,
+    ):
+        super(CombinedDecoder, self).__init__()
+
+        def make_sequence():
+            return []
+
+        dims = [latent_size + 3] + dims + [2]  # <<<< 2 outputs instead of 1.
+
+        self.num_layers = len(dims)
+        self.num_class = num_class
+        self.norm_layers = norm_layers
+        self.latent_in = latent_in
+        self.latent_dropout = latent_dropout
+        if self.latent_dropout:
+            self.lat_dp = nn.Dropout(0.2)
+
+        self.xyz_in_all = xyz_in_all
+        self.weight_norm = weight_norm
+        self.use_classifier = use_classifier
+
+        for layer in range(0, self.num_layers - 1):
+            if layer + 1 in latent_in:
+                out_dim = dims[layer + 1] - dims[0]
+            else:
+                out_dim = dims[layer + 1]
+                if self.xyz_in_all and layer != self.num_layers - 2:
+                    out_dim -= 3
+            # print("out dim", out_dim)
+
+            if weight_norm and layer in self.norm_layers:
+                setattr(
+                    self,
+                    "lin" + str(layer),
+                    nn.utils.weight_norm(nn.Linear(dims[layer], out_dim)),
+                )
+            else:
+                setattr(self, "lin" + str(layer), nn.Linear(dims[layer], out_dim))
+
+            if (
+                (not weight_norm)
+                and self.norm_layers is not None
+                and layer in self.norm_layers
+            ):
+                setattr(self, "bn" + str(layer), nn.LayerNorm(out_dim))
+
+            # print(dims[layer], out_dim)
+            # classifier
+            if self.use_classifier and layer == self.num_layers - 2:
+                # print("dim last_layer", dims[layer])
+                self.classifier_head = nn.Linear(dims[layer], self.num_class)
+
+        self.use_tanh = use_tanh
+        if use_tanh:
+            self.tanh = nn.Tanh()
+        self.relu = nn.ReLU()
+
+        self.dropout_prob = dropout_prob
+        self.dropout = dropout
+        self.th = nn.Tanh()
+
+    # input: N x (L+3)
+    def forward(self, input):
+        xyz = input[:, -3:]
+
+        if input.shape[1] > 3 and self.latent_dropout:
+            latent_vecs = input[:, :-3]
+            latent_vecs = F.dropout(latent_vecs, p=0.2, training=self.training)
+            x = torch.cat([latent_vecs, xyz], 1)
+        else:
+            x = input
+
+        for layer in range(0, self.num_layers - 1):
+            # classify
+            if self.use_classifier and layer == self.num_layers - 2:
+                predicted_class = self.classifier_head(x)
+
+            lin = getattr(self, "lin" + str(layer))
+            if layer in self.latent_in:
+                x = torch.cat([x, input], 1)
+            elif layer != 0 and self.xyz_in_all:
+                x = torch.cat([x, xyz], 1)
+            x = lin(x)
+            # last layer Tanh
+            if layer == self.num_layers - 2 and self.use_tanh:
+                x = self.tanh(x)
+            if layer < self.num_layers - 2:
+                if (
+                    self.norm_layers is not None
+                    and layer in self.norm_layers
+                    and not self.weight_norm
+                ):
+                    bn = getattr(self, "bn" + str(layer))
+                    x = bn(x)
+                x = self.relu(x)
+                if self.dropout is not None and layer in self.dropout:
+                    x = F.dropout(x, p=self.dropout_prob, training=self.training)
+
+        if hasattr(self, "th"):
+            x = self.th(x)
+
+        # hand, object, class label
+        if self.use_classifier:
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_class
+        else:
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda()
 
 class CombinedDecoder(nn.Module):
     def __init__(
