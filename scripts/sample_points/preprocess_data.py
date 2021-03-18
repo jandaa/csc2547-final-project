@@ -6,6 +6,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -109,7 +110,7 @@ if __name__ == "__main__":
 
     executable = str(Path.cwd() / "scripts/sample_points/bin/PreprocessMesh")
     extension = ".npz"
-
+    transform_filename = "transform.csv"
     commands = []
 
     target_dir = Path(args.data_dir)
@@ -118,6 +119,9 @@ if __name__ == "__main__":
         relative = Path(str(path)[len(str(source_dir)):])
         target = Path(str(target_dir) + str(relative)[:-4] + extension)
         target.parent.mkdir(parents=True, exist_ok=True)
+
+        # copy over transformation
+        shutil.copy(path.parent / transform_filename, target.parent / transform_filename)
 
         commands.append(
             (
