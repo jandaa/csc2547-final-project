@@ -139,3 +139,5 @@ mano/models/
 
 # output
 output/
+input/
+data/
