@@ -6,7 +6,7 @@ import torch.utils.data
 import trimesh
 from torchvision import transforms
 from skimage import io, transform, color
-
+from pathlib import Path
 import utils.misc as misc_utils
 
 
@@ -75,13 +75,16 @@ def filter_invalid_sdf(tensor, lab_tensor, dist):
     # print(keep[:15])
     return tensor[keep, :], lab_tensor[keep, :]
 
+def filter_invalid_sdf_ShapeAssembly(tensor, dist):
+    keep = (torch.abs(tensor[:, 3]) < abs(dist)) & (torch.abs(tensor[:, 4]) < abs(dist))
+    # print(keep[:15])
+    return tensor[keep, :], lab_tensor[keep, :]
 
 def unpack_normal_params(filename):
     npz = np.load(filename)
     scale = torch.from_numpy(npz["scale"])
     offset = torch.from_numpy(npz["offset"])
     return scale, offset
-
 
 def unpack_sdf_samples(filename, subsample=None, hand=True, clamp=None, filter_dist=False):
     npz = np.load(filename)
@@ -146,6 +149,48 @@ def unpack_sdf_samples(filename, subsample=None, hand=True, clamp=None, filter_d
         labels[:] = -1
     return samples, labels
 
+def unpack_sdf_samples_shape_assembly(filename, subsample=None, hand=True, clamp=None, filter_dist=False):
+    npz = np.load(filename)
+    if subsample is None:
+        return npz
+    try:
+        pos_tensor = remove_nans(torch.from_numpy(npz["pos"]))
+        neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
+    except Exception as e:
+        print("fail to load {}, {}".format(filename, e))
+    ### make it (x,y,z,sdf_to_hand,sdf_to_obj)
+    
+    #this is redundant but is legacy from the original code
+    xyz_pos = pos_tensor[:, :3]
+    psdf_pos = pos_tensor[:, 3].unsqueeze(1)
+    pos_tensor = torch.cat([xyz_pos, sdf_pos], 1)
+
+    xyz_neg = neg_tensor[:, :3]
+    sdf_neg = neg_tensor[:, 3].unsqueeze(1)
+    neg_tensor = torch.cat([xyz_neg, sdf_neg], 1)
+
+    # split the sample into half
+    half = int(subsample / 2)
+
+    if filter_dist:
+        pos_tensor = filter_invalid_sdf_ShapeAssembly(pos_tensor, 2.0)
+        neg_tensor = filter_invalid_sdf_ShapeAssembly(neg_tensor, 2.0)
+
+    random_pos = (torch.rand(half) * pos_tensor.shape[0]).long()
+    random_neg = (torch.rand(half) * neg_tensor.shape[0]).long()
+
+    sample_pos = torch.index_select(pos_tensor, 0, random_pos)
+    sample_neg = torch.index_select(neg_tensor, 0, random_neg)
+
+    # label
+    sample_pos_lab = torch.index_select(lab_pos_tensor, 0, random_pos)
+    sample_neg_lab = torch.index_select(lab_neg_tensor, 0, random_neg)
+
+    
+    samples = torch.cat([sample_pos, sample_neg], 0)
+
+    return samples
+
 
 def get_instance_filenames(data_source, input_type, encoder_input_source, split, check_file=True, fhb=False, dataset_name="obman"):
     unusable_count = 0
@@ -203,6 +248,21 @@ def get_instance_filenames(data_source, input_type, encoder_input_source, split,
         )
     return npzfiles_hand, npzfiles_obj, normalization_params, encoder_input_files
 
+def get_shape_assembly_filenames(data_source: Path, scenes):
+    part1_filenames = [
+        data_source / scene / "part1.npz"
+        for scene in scenes
+    ]
+    part2_filenames = [
+        data_source / scene / "part2.npz"
+        for scene in scenes
+    ]
+    transform_filenames = [
+        data_source / scene / "transform.csv"
+        for scene in scenes
+    ]
+    
+    return part1_filenames, part2_filenames, transform_filenames
 
 def get_negative_surface_points(filename=None, pc_sample=500, surface_dist=0.005, data=None):
 
@@ -352,6 +412,52 @@ class SDFSamples(torch.utils.data.Dataset):
             return (hand_samples, hand_labels, obj_samples, obj_labels,
                     scale, offset, encoder_input_hand, encoder_input_obj, self.npyfiles_hand[idx])
 
+class SDFAssemblySamples(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        data_source,
+        split,
+        subsample,
+        same_point=True,
+        load_ram=False,
+        print_filename=False,
+        num_files=1000000,
+        clamp=None,
+        pc_sample=500,
+        check_file=True,
+        fhb=False,
+        model_type="1encoder1decoder",
+    ):
+        self.subsample = subsample
+        self.data_source = data_source
+        self.pc_sample = pc_sample
+        self.model_type = model_type
+
+        (self.part1_filenames,
+         self.part2_filenames,
+         self.transform_filenames) = get_shape_assembly_filenames(data_source, split)
+
+        self.same_point = same_point
+        self.clamp = clamp
+
+    def __len__(self):
+        return len(self.part1_filenames)
+
+    def __getitem__(self, idx):
+        part1_filename = self.part1_filenames[idx]
+        part2_filename = self.part2_filenames[idx]
+        transform_filename = self.transform_filenames[idx]
+
+        transform = np.genfromtxt(str(transform_filename), delimiter=',')
+        
+        #Sample points within epsilon of surface (negative signed distance values)
+        part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
+        part2_surface_points = get_negative_surface_points(part2_filename, self.pc_sample)
+
+        part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, num_sample, clamp=self.clamp, filter_dist=self.filter_dist)
+        part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, num_sample, clamp=self.clamp, filter_dist=self.filter_dist)
+        
+        return part1_sdf_samples, part1_sdf_samples, transform
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):
     object_center = encoder_input_obj.mean(dim=0)
