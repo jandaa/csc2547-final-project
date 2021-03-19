@@ -47,9 +47,20 @@ def filter_classes(patterns, classes):
         return filter_classes_glob(patterns, classes)
 
 
-def process_mesh(mesh_filepath, target_filepath, executable, additional_args):
-    logging.info(mesh_filepath + " --> " + target_filepath)
-    command = [executable, "-m", mesh_filepath, "-o", target_filepath] + additional_args
+def process_mesh(mesh1_filepath, mesh2_filepath, target1_filepath, target2_filepath, executable, additional_args):
+    logging.info(mesh1_filepath + " --> " + target1_filepath)
+    logging.info(mesh2_filepath + " --> " + target2_filepath)
+    command = [
+        executable, 
+        "--hand", mesh1_filepath, 
+        "--obj", mesh2_filepath,
+        "--outhand", target1_filepath,
+        "--outobj", target2_filepath
+    ] + additional_args
+
+    print()
+    print(" ".join(elem for elem in command))
+    print()
 
     subproc = subprocess.Popen(command, stdout=subprocess.DEVNULL)
     subproc.wait()
@@ -106,6 +117,8 @@ if __name__ == "__main__":
         help="The number of threads to use to process the data.",
     )
 
+    # export PANGOLIN_WINDOW_URI=headless://
+
     args = arg_parser.parse_args()
 
     executable = str(Path.cwd() / "scripts/sample_points/bin/PreprocessMesh")
@@ -115,18 +128,26 @@ if __name__ == "__main__":
 
     target_dir = Path(args.data_dir)
     source_dir = Path(args.source_dir)
-    for path in source_dir.rglob('*.obj'):
-        relative = Path(str(path)[len(str(source_dir)):])
-        target = Path(str(target_dir) + str(relative)[:-4] + extension)
-        target.parent.mkdir(parents=True, exist_ok=True)
+    for obj_dir in source_dir.iterdir():
+
+        input_partA = obj_dir / "partA.obj"
+        input_partB = obj_dir / "partB.obj"
+
+        output_dir = target_dir / obj_dir.name
+        output_partA = output_dir / ("partA" + extension)
+        output_partB = output_dir / ("partB" + extension)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # copy over transformation
-        shutil.copy(path.parent / transform_filename, target.parent / transform_filename)
+        shutil.copy(obj_dir / transform_filename, output_dir / transform_filename)
 
         commands.append(
             (
-                str(path),
-                str(target),
+                str(Path.cwd() / input_partA),
+                str(Path.cwd() / input_partB),
+                str(Path.cwd() / output_partA),
+                str(Path.cwd() / output_partB),
             )
         )
 
@@ -135,13 +156,17 @@ if __name__ == "__main__":
     ) as executor:
 
         for (
-            mesh_source_path,
-            target_filepath,
+            input_partA,
+            input_partB,
+            output_partA,
+            output_partB
         ) in commands:
             executor.submit(
                 process_mesh,
-                mesh_source_path,
-                target_filepath,
+                input_partA,
+                input_partB,
+                output_partA,
+                output_partB,
                 executable,
                 [],
             )

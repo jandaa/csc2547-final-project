@@ -280,7 +280,7 @@ class ModelShapeAssemblyEncoderDecoderVAE(nn.Module):
         nb_classes, 
         num_sdf_samp_per_scene
     ):
-        super(ModelTwoEncodersOneDecoderVAE, self).__init__()
+        super(ModelShapeAssemblyEncoderDecoderVAE, self).__init__()
         self.encoder_part1 = encoder_part1
         self.encoder_part2 = encoder_part2
         self.decoder = decoder
@@ -316,7 +316,7 @@ class ShapeAssemblyDecoder(nn.Module):
         latent_dropout=False,
         predict_pose=False,
     ):
-        super(CombinedDecoder, self).__init__()
+        super(ShapeAssemblyDecoder, self).__init__()
 
         dims = [latent_size + 3] + dims + [2]  # <<<< 2 outputs instead of 1.
 

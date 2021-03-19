@@ -20,7 +20,8 @@
 
 extern pangolin::GlSlProgram GetShaderProgram();
 
-void SavePointsToPLY(const std::vector<Eigen::Vector3f>& verts, const std::string outputfile) {
+void SavePointsToPLY(const std::vector<Eigen::Vector3f> &verts,
+                     const std::string outputfile) {
   const std::size_t num_verts = verts.size();
   Eigen::Vector3f v;
 
@@ -48,31 +49,30 @@ void SavePointsToPLY(const std::vector<Eigen::Vector3f>& verts, const std::strin
   plyFile.close();
 }
 
-void SaveNormalizationParamsToNPZ(
-    const Eigen::Vector3f offset,
-    const float scale,
-    const std::string filename) {
+void SaveNormalizationParamsToNPZ(const Eigen::Vector3f offset,
+                                  const float scale,
+                                  const std::string filename) {
+
   cnpy::npz_save(filename, "offset", offset.data(), {3ul}, "w");
   cnpy::npz_save(filename, "scale", &scale, {1ul}, "a");
 }
 
-void SampleFromSurfaceInside(
-    pangolin::Geometry& geom,
-    std::vector<Eigen::Vector3f>& surfpts,
-    int num_sample,
-    KdVertexListTree& kdTree,
-    std::vector<Eigen::Vector3f>& surface_vertices,
-    std::vector<Eigen::Vector3f>& surface_normals,
-    float delta) {
+void SampleFromSurfaceInside(pangolin::Geometry &geom,
+                             std::vector<Eigen::Vector3f> &surfpts,
+                             int num_sample, KdVertexListTree &kdTree,
+                             std::vector<Eigen::Vector3f> &surface_vertices,
+                             std::vector<Eigen::Vector3f> &surface_normals,
+                             float delta) {
   float total_area = 0.0f;
 
   std::vector<float> cdf_by_area;
 
   std::vector<Eigen::Vector3i> linearized_faces;
 
-  for (const auto& object : geom.objects) {
+  for (const auto &object : geom.objects) {
     auto it_vert_indices = object.second.attributes.find("vertex_indices");
     if (it_vert_indices != object.second.attributes.end()) {
+
       pangolin::Image<uint32_t> ibo =
           pangolin::get<pangolin::Image<uint32_t>>(it_vert_indices->second);
 
@@ -82,10 +82,11 @@ void SampleFromSurfaceInside(
     }
   }
 
-  pangolin::Image<float> vertices =
-      pangolin::get<pangolin::Image<float>>(geom.buffers["geometry"].attributes["vertex"]);
+  pangolin::Image<float> vertices = pangolin::get<pangolin::Image<float>>(
+      geom.buffers["geometry"].attributes["vertex"]);
 
-  for (const Eigen::Vector3i& face : linearized_faces) {
+  for (const Eigen::Vector3i &face : linearized_faces) {
+
     float area = TriangleArea(
         (Eigen::Vector3f)Eigen::Map<Eigen::Vector3f>(vertices.RowPtr(face(0))),
         (Eigen::Vector3f)Eigen::Map<Eigen::Vector3f>(vertices.RowPtr(face(1))),
@@ -98,9 +99,11 @@ void SampleFromSurfaceInside(
     total_area += area;
 
     if (cdf_by_area.empty()) {
+
       cdf_by_area.push_back(area);
 
     } else {
+
       cdf_by_area.push_back(cdf_by_area.back() + area);
     }
   }
@@ -115,7 +118,7 @@ void SampleFromSurfaceInside(
         lower_bound(cdf_by_area.begin(), cdf_by_area.end(), tri_sample);
     int tri_index = tri_index_iter - cdf_by_area.begin();
 
-    const Eigen::Vector3i& face = linearized_faces[tri_index];
+    const Eigen::Vector3i &face = linearized_faces[tri_index];
 
     Eigen::Vector3f point = SamplePointFromTriangle(
         Eigen::Map<Eigen::Vector3f>(vertices.RowPtr(face(0))),
@@ -141,7 +144,7 @@ void SampleFromSurfaceInside(
   }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   std::string meshFileName;
   std::string plyOutFile;
   std::string normalizationOutputFile;
@@ -151,7 +154,7 @@ int main(int argc, char** argv) {
   app.add_option("-m", meshFileName, "Mesh File Name for Reading")->required();
   app.add_option("-o", plyOutFile, "Save npy pc to here")->required();
   app.add_option("-n", normalizationOutputFile, "Save normalization");
-  app.add_option("-s", num_sample, "Save ply pc to here");
+  app.add_option("-s", num_sample, "Number of sample points");
 
   CLI11_PARSE(app, argc, argv);
 
@@ -168,9 +171,10 @@ int main(int argc, char** argv) {
   {
     int total_num_faces = 0;
 
-    for (const auto& object : geom.objects) {
+    for (const auto &object : geom.objects) {
       auto it_vert_indices = object.second.attributes.find("vertex_indices");
       if (it_vert_indices != object.second.attributes.end()) {
+
         pangolin::Image<uint32_t> ibo =
             pangolin::get<pangolin::Image<uint32_t>>(it_vert_indices->second);
 
@@ -179,20 +183,24 @@ int main(int argc, char** argv) {
     }
 
     //      const int total_num_indices = total_num_faces * 3;
-    pangolin::ManagedImage<uint8_t> new_buffer(3 * sizeof(uint32_t), total_num_faces);
+    pangolin::ManagedImage<uint8_t> new_buffer(3 * sizeof(uint32_t),
+                                               total_num_faces);
 
     pangolin::Image<uint32_t> new_ibo =
-        new_buffer.UnsafeReinterpret<uint32_t>().SubImage(0, 0, 3, total_num_faces);
+        new_buffer.UnsafeReinterpret<uint32_t>().SubImage(0, 0, 3,
+                                                          total_num_faces);
 
     int index = 0;
 
-    for (const auto& object : geom.objects) {
+    for (const auto &object : geom.objects) {
       auto it_vert_indices = object.second.attributes.find("vertex_indices");
       if (it_vert_indices != object.second.attributes.end()) {
+
         pangolin::Image<uint32_t> ibo =
             pangolin::get<pangolin::Image<uint32_t>>(it_vert_indices->second);
 
         for (int i = 0; i < ibo.h; ++i) {
+
           new_ibo.Row(index).CopyFrom(ibo.Row(i));
           ++index;
         }
@@ -200,21 +208,24 @@ int main(int argc, char** argv) {
     }
 
     geom.objects.clear();
-    auto faces = geom.objects.emplace(std::string("mesh"), pangolin::Geometry::Element());
+    auto faces = geom.objects.emplace(std::string("mesh"),
+                                      pangolin::Geometry::Element());
 
     faces->second.Reinitialise(3 * sizeof(uint32_t), total_num_faces);
 
     faces->second.CopyFrom(new_buffer);
 
-    new_ibo = faces->second.UnsafeReinterpret<uint32_t>().SubImage(0, 0, 3, total_num_faces);
+    new_ibo = faces->second.UnsafeReinterpret<uint32_t>().SubImage(
+        0, 0, 3, total_num_faces);
     faces->second.attributes["vertex_indices"] = new_ibo;
   }
 
   // remove textures
   geom.textures.clear();
 
-  pangolin::Image<uint32_t> modelFaces = pangolin::get<pangolin::Image<uint32_t>>(
-      geom.objects.begin()->second.attributes["vertex_indices"]);
+  pangolin::Image<uint32_t> modelFaces =
+      pangolin::get<pangolin::Image<uint32_t>>(
+          geom.objects.begin()->second.attributes["vertex_indices"]);
 
   // float max_dist = BoundingCubeNormalization(geom, true);
 
@@ -253,6 +264,7 @@ int main(int argc, char** argv) {
 
   std::vector<Eigen::Vector4f> point_normals;
   std::vector<Eigen::Vector4f> point_verts;
+  std::vector<std::size_t> point_tri_ids; ///
 
   size_t num_tri = modelFaces.h;
   std::vector<Eigen::Vector4f> tri_id_normal_test(num_tri);
@@ -263,8 +275,8 @@ int main(int argc, char** argv) {
 
   for (unsigned int v = 0; v < views.size(); v++) {
     // change camera location
-    s_cam2.SetModelViewMatrix(
-        pangolin::ModelViewLookAt(views[v][0], views[v][1], views[v][2], 0, 0, 0, pangolin::AxisY));
+    s_cam2.SetModelViewMatrix(pangolin::ModelViewLookAt(
+        views[v][0], views[v][1], views[v][2], 0, 0, 0, pangolin::AxisY));
     // Draw the scene to the framebuffer
     framebuffer.Bind();
     glViewport(0, 0, w, h);
@@ -284,7 +296,9 @@ int main(int argc, char** argv) {
     pangolin::TypedImage img_normals;
     normals.Download(img_normals);
     std::vector<Eigen::Vector4f> im_norms = ValidPointsAndTrisFromIm(
-        img_normals.UnsafeReinterpret<Eigen::Vector4f>(), tri_id_normal_test, total_obs, wrong_obs);
+        img_normals.UnsafeReinterpret<Eigen::Vector4f>(), tri_id_normal_test,
+        point_tri_ids,
+        total_obs, wrong_obs);
     point_normals.insert(point_normals.end(), im_norms.begin(), im_norms.end());
 
     pangolin::TypedImage img_verts;
@@ -308,15 +322,18 @@ int main(int argc, char** argv) {
   kdTree_surf.buildIndex();
 
   std::vector<Eigen::Vector3f> surf_pts;
-  SampleFromSurfaceInside(geom, surf_pts, num_sample, kdTree_surf, vertices2, normals2, 0.00001);
+  SampleFromSurfaceInside(geom, surf_pts, num_sample, kdTree_surf, vertices2,
+                          normals2, 0.00001);
   SavePointsToPLY(surf_pts, plyOutFile);
-
+  
   if (!normalizationOutputFile.empty()) {
+
     const std::pair<Eigen::Vector3f, float> normalizationParams =
         ComputeNormalizationParameters(geom);
 
-    SaveNormalizationParamsToNPZ(
-        normalizationParams.first, normalizationParams.second, normalizationOutputFile);
+    SaveNormalizationParamsToNPZ(normalizationParams.first,
+                                 normalizationParams.second,
+                                 normalizationOutputFile);
   }
 
   std::cout << "ended correctly" << std::endl;

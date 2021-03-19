@@ -1,6 +1,6 @@
 {
     "Description" : "Hand-object together, test point cloud input",
-    "DataSource" : "./output",
+    "DataSource" : "./shape_assembly/processed_data",
     "ImageSource" : "",
     "TrainSplit" : "./shape_assembly/train_split.json",
     "ValSplit" : "./shape_assembly/test_split.json",
@@ -17,7 +17,7 @@
     "ContactLossWeight" : 0.005,
     "NetworkSpecs" : {
         "dims" : [512, 512, 512, 1024, 512, 512, 512, 512],
-        "num_class" : 6,
+        "num_dof" : 6,
         "dropout" : [0, 1, 2, 3, 4, 5, 6, 7],
         "dropout_prob" : 0.2,
         "norm_layers" : [0, 1, 2, 3, 4, 5, 6, 7],

@@ -110,6 +110,7 @@ def unpack_sdf_samples(filename, subsample=None, hand=True, clamp=None, filter_d
     else:
         xyz_pos = pos_tensor[:, :3]
         sdf_pos = pos_tensor[:, 3].unsqueeze(1)
+        #5 columns: xyz, sdf hand, sdf object
         pos_tensor = torch.cat([xyz_pos, pos_sdf_other, sdf_pos], 1)
 
         xyz_neg = neg_tensor[:, :3]
@@ -156,18 +157,20 @@ def unpack_sdf_samples_shape_assembly(filename, subsample=None, hand=True, clamp
     try:
         pos_tensor = remove_nans(torch.from_numpy(npz["pos"]))
         neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
+        pos_sdf_other = torch.from_numpy(npz["pos_other"])
+        neg_sdf_other = torch.from_numpy(npz["neg_other"])
     except Exception as e:
         print("fail to load {}, {}".format(filename, e))
     ### make it (x,y,z,sdf_to_hand,sdf_to_obj)
-    
-    #this is redundant but is legacy from the original code
+
     xyz_pos = pos_tensor[:, :3]
     sdf_pos = pos_tensor[:, 3].unsqueeze(1)
-    pos_tensor = torch.cat([xyz_pos, sdf_pos], 1)
+    #5 columns: xyz, sdf hand, sdf object
+    pos_tensor = torch.cat([xyz_pos, pos_sdf_other, sdf_pos], 1)
 
     xyz_neg = neg_tensor[:, :3]
     sdf_neg = neg_tensor[:, 3].unsqueeze(1)
-    neg_tensor = torch.cat([xyz_neg, sdf_neg], 1)
+    neg_tensor = torch.cat([xyz_neg, neg_sdf_other, sdf_neg], 1)
 
     # split the sample into half
     half = int(subsample / 2)
@@ -246,11 +249,11 @@ def get_instance_filenames(data_source, input_type, encoder_input_source, split,
 def get_shape_assembly_filenames(data_source: Path, scenes):
 
     part1_filenames = [
-        data_source / scene / "part1.npz"
+        data_source / scene / "partA.npz"
         for scene in scenes
     ]
     part2_filenames = [
-        data_source / scene / "part2.npz"
+        data_source / scene / "partB.npz"
         for scene in scenes
     ]
     transform_filenames = [

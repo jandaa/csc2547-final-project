@@ -745,6 +745,25 @@ def main_function(experiment_directory, continue_from, batch_split):
 
 def shape_assembly_main_function(experiment_directory, continue_from, batch_split):
 
+    def save_latest(epoch):
+        save_model(experiment_directory, "latest.pth", encoderDecoder, epoch)
+        save_optimizer(experiment_directory, "latest.pth", optimizer_all, epoch)
+        # save_latent_vectors(experiment_directory, "latest.pth", lat_vecs, epoch)
+
+    def save_checkpoints(epoch):
+        save_model(experiment_directory, str(epoch) + ".pth", encoderDecoder, epoch)
+        save_optimizer(experiment_directory, str(epoch) + ".pth", optimizer_all, epoch)
+        # save_latent_vectors(experiment_directory, str(epoch) + ".pth", lat_vecs, epoch)
+
+    def signal_handler(sig, frame):
+        logging.info("Stopping early...")
+        sys.exit(0)
+
+    def adjust_learning_rate(lr_schedules, optimizer, epoch):
+
+        for i, param_group in enumerate(optimizer.param_groups):
+            param_group["lr"] = lr_schedules[i].get_learning_rate(epoch)
+
     logging.debug("running " + experiment_directory)
 
     print(experiment_directory)
@@ -757,8 +776,12 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     train_split_file = specs["TrainSplit"]
     subsample = specs["SamplesPerScene"]
     scene_per_batch = specs["ScenesPerBatch"]
+    latent_size = specs["LatentSize"]
+    num_epochs = specs["NumEpochs"]
     num_data_loader_threads = get_spec_with_default(specs, "DataLoaderThreads", 8)
     val_split_file = get_spec_with_default(specs, "ValSplit", None)
+    nb_classes = get_spec_with_default(specs["NetworkSpecs"], "num_class", 6)
+    lr_schedules = get_learning_rate_schedules(specs)
 
     with open(train_split_file, "r") as f:
         train_split = json.load(f)
@@ -773,8 +796,88 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         drop_last=True
     )
 
-    for i, (part1_surface_points, part2_surface_points, part1_sdf_samples, part2_sdf_samples, transform) in enumerate(sdf_loader):
-        print(i)
+    half_latent_size = int(latent_size/2)
+
+    encoder_part1 = arch.ResnetPointnet(c_dim=half_latent_size, hidden_dim=256).cuda()
+    encoder_part2 = arch.ResnetPointnet(c_dim=half_latent_size, hidden_dim=256).cuda()
+    print("Point cloud encoder, each branch has latent size", half_latent_size)
+
+    decoder = arch.ShapeAssemblyDecoder(
+        latent_size, 
+        **specs["NetworkSpecs"]
+    )
+
+    encoder_decoder = arch.ModelShapeAssemblyEncoderDecoderVAE(
+        encoder_part1,
+        encoder_part2,
+        decoder,
+        nb_classes,
+        subsample
+    )
+
+    optimizer_all = torch.optim.Adam(
+        [
+            {
+                "params": encoder_decoder.parameters(),
+            }
+        ]
+    )
+
+    start_epoch = 1
+
+    # continue from latest checkpoint if exists
+    if (continue_from is None and 
+            utils.misc.is_checkpoint_exist(experiment_directory, 'latest')):
+        continue_from = 'latest'
+
+    if continue_from is not None:
+        logging.info('continuing from "{}"'.format(continue_from))
+
+        model_epoch = utils.misc.load_model_parameters(
+            experiment_directory, continue_from, encoder_decoder
+        )
+
+        optimizer_epoch = load_optimizer(
+            experiment_directory, continue_from + ".pth", optimizer_all
+        )
+        start_epoch = model_epoch + 1
+        logging.debug("loaded")
+
+    # training loop
+    logging.info("starting from epoch {}".format(start_epoch))
+
+    for epoch in range(start_epoch, num_epochs + 1):
+        start = time.time()
+
+        logging.info("epoch {}...".format(epoch))
+
+        encoder_decoder.train()
+
+        adjust_learning_rate(lr_schedules, optimizer_all, epoch)
+
+        for i, (
+            part1_surface_points, 
+            part2_surface_points, 
+            part1_sdf_samples, 
+            part2_sdf_samples, 
+            transform) in enumerate(sdf_loader):
+            
+            print(i)
+
+            batch_loss = 0.0
+            optimizer_all.zero_grad()
+
+            samples = part2_sdf_samples
+
+            samples.requires_grad = False
+
+            sdf_data = (samples.cuda()).reshape(
+                subsample * scene_per_batch, 5
+            )
+            
+            logging.info("Training")
+
+
 
 if __name__ == "__main__":
 
