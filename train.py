@@ -814,6 +814,16 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         nb_classes,
         subsample
     )
+    encoder_decoder = encoder_decoder.cuda()
+
+    logging.info("training with {} GPU(s)".format(torch.cuda.device_count()))
+
+    # encoder_decoder = torch.nn.DataParallel(encoder_decoder)
+
+    logging.debug("torch num_threads: {}".format(torch.get_num_threads()))
+    logging.debug(encoder_decoder)
+
+    loss_l1 = torch.nn.L1Loss(reduction='sum')
 
     optimizer_all = torch.optim.Adam(
         [
@@ -822,6 +832,8 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             }
         ]
     )
+
+    writer = SummaryWriter(os.path.join(experiment_directory, 'log'))
 
     start_epoch = 1
 
@@ -861,23 +873,50 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             part1_sdf_samples, 
             part2_sdf_samples, 
             transform) in enumerate(sdf_loader):
-            
-            print(i)
 
             batch_loss = 0.0
             optimizer_all.zero_grad()
 
-            samples = part2_sdf_samples
+            for _subbatch in range(batch_split):
 
-            samples.requires_grad = False
+                samples = part2_sdf_samples
 
-            sdf_data = (samples.cuda()).reshape(
-                subsample * scene_per_batch, 5
-            )
-            
-            logging.info("Training")
+                samples.requires_grad = False
 
+                sdf_data = (samples.cuda()).reshape(
+                    subsample * scene_per_batch, 5
+                )
+                
+                import copy
+                xyzs = copy.deepcopy(sdf_data[:, 0:3])
+                sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
+                sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
+                
+                sdf_pred_part1, sdf_pred_part2, _ = encoder_decoder(
+                                                        part1_surface_points.cuda(), 
+                                                        part2_surface_points.cuda(), 
+                                                        xyzs
+                                                    )
 
+                # compute loses
+                loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
+                loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
+
+                loss = loss_sdf_part1 + loss_sdf_part2
+
+                loss.backward()
+
+                batch_loss += loss.item()
+
+                print('step {}, loss {:.5f}'.format(
+                        (epoch-1) * len(sdf_loader) + i, 
+                        loss.item()
+                    )
+                )
+                 
+                writer.add_scalar('training_loss_1e-3', loss.item() * 1000.0, (epoch-1) * len(sdf_loader) + i)
+
+            optimizer_all.step()
 
 if __name__ == "__main__":
 
@@ -918,6 +957,5 @@ if __name__ == "__main__":
     utils.configure_logging(args)
     
     shape_assembly_main_function(args.experiment_directory, args.continue_from, int(args.batch_split))
-    # main_function(args.experiment_directory, args.continue_from, int(args.batch_split))
 
     

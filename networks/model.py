@@ -289,11 +289,11 @@ class ModelShapeAssemblyEncoderDecoderVAE(nn.Module):
         self.num_sdf_samp_per_scene = num_sdf_samp_per_scene
 
     def forward(self, part1_points, part2_points, xyzs):
-        part1_encoding = self.encoder_obj(part1_points)
-        part2_encoding = self.encoder_obj(part2_points)
+        part1_encoding = self.encoder_part1(part1_points)
+        part2_encoding = self.encoder_part1(part2_points)
 
-        latent_part1 = part1_encoding.repeat_interleave(self.num_samp_per_scene, dim=0)
-        latent_part2 = part2_encoding.repeat_interleave(self.num_samp_per_scene, dim=0)
+        latent_part1 = part1_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
+        latent_part2 = part2_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
 
         latent = torch.cat([latent_part1, latent_part2], 1)
         decoder_inputs = torch.cat([latent, xyzs], 1)
