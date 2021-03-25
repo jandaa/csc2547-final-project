@@ -746,12 +746,12 @@ def main_function(experiment_directory, continue_from, batch_split):
 def shape_assembly_main_function(experiment_directory, continue_from, batch_split):
 
     def save_latest(epoch):
-        save_model(experiment_directory, "latest.pth", encoderDecoder, epoch)
+        save_model(experiment_directory, "latest.pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, "latest.pth", optimizer_all, epoch)
         # save_latent_vectors(experiment_directory, "latest.pth", lat_vecs, epoch)
 
     def save_checkpoints(epoch):
-        save_model(experiment_directory, str(epoch) + ".pth", encoderDecoder, epoch)
+        save_model(experiment_directory, str(epoch) + ".pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, str(epoch) + ".pth", optimizer_all, epoch)
         # save_latent_vectors(experiment_directory, str(epoch) + ".pth", lat_vecs, epoch)
 
@@ -782,6 +782,19 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     val_split_file = get_spec_with_default(specs, "ValSplit", None)
     nb_classes = get_spec_with_default(specs["NetworkSpecs"], "num_class", 6)
     lr_schedules = get_learning_rate_schedules(specs)
+    log_frequency = get_spec_with_default(specs, "LogFrequency", 5)
+    log_frequency_step = get_spec_with_default(specs, "LogFrequencyStep", 100)
+
+    checkpoints = list(
+        range(
+            specs["SnapshotFrequency"],
+            specs["NumEpochs"] + 1,
+            specs["SnapshotFrequency"],
+        )
+    )
+    for checkpoint in specs["AdditionalSnapshots"]:
+        checkpoints.append(checkpoint)
+    checkpoints.sort()
 
     with open(train_split_file, "r") as f:
         train_split = json.load(f)
@@ -917,6 +930,25 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 writer.add_scalar('training_loss_1e-3', loss.item() * 1000.0, (epoch-1) * len(sdf_loader) + i)
 
             optimizer_all.step()
+        
+        end = time.time()
+
+        seconds_elapsed = end - start
+        print("time used:", seconds_elapsed)
+
+        for idx, schedule in enumerate(lr_schedules):
+            writer.add_scalar('learning_rate_' + str(idx),
+                schedule.get_learning_rate(epoch),
+                epoch * len(sdf_loader)
+            )
+        
+        if epoch in checkpoints:
+            save_checkpoints(epoch)
+
+        if epoch % log_frequency == 0:
+            save_latest(epoch)
+            print("save at {}".format(epoch))
+
 
 if __name__ == "__main__":
 

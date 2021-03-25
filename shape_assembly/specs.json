@@ -30,7 +30,7 @@
     "NumEpochs" : 1600,
     "LatentSize": 512,
     "ValFrequency" : 50,
-    "SnapshotFrequency" : 100,
+    "SnapshotFrequency" : 5,
     "AdditionalSnapshots" : [ 100, 500 ],
     "LearningRateSchedule" : [
         { 
