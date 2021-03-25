@@ -78,7 +78,7 @@ def filter_invalid_sdf(tensor, lab_tensor, dist):
 def filter_invalid_sdf_ShapeAssembly(tensor, dist):
     keep = (torch.abs(tensor[:, 3]) < abs(dist)) & (torch.abs(tensor[:, 4]) < abs(dist))
     # print(keep[:15])
-    return tensor[keep, :], lab_tensor[keep, :]
+    return tensor[keep, :]
 
 def unpack_normal_params(filename):
     npz = np.load(filename)
