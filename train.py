@@ -837,6 +837,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     logging.debug(encoder_decoder)
 
     loss_l1 = torch.nn.L1Loss(reduction='sum')
+    loss_l2 = torch.nn.MSELoss(reduction='sum')
 
     optimizer_all = torch.optim.Adam(
         [
@@ -885,7 +886,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             part2_surface_points, 
             part1_sdf_samples, 
             part2_sdf_samples, 
-            transform) in enumerate(sdf_loader):
+            translation, rotation) in enumerate(sdf_loader):
 
             batch_loss = 0.0
             optimizer_all.zero_grad()
@@ -905,7 +906,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
-                sdf_pred_part1, sdf_pred_part2, _ = encoder_decoder(
+                sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
                                                         part1_surface_points.cuda(), 
                                                         part2_surface_points.cuda(), 
                                                         xyzs
@@ -914,8 +915,10 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 # compute loses
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
                 loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
+                loss_translation = loss_l2(predicted_translation, translation)
+                loss_rotation = loss_l2(rotation, predicted_rotation)
 
-                loss = loss_sdf_part1 + loss_sdf_part2
+                loss = loss_sdf_part1 + loss_sdf_part2 + loss_translation + loss_rotation
 
                 loss.backward()
 

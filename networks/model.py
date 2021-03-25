@@ -306,6 +306,8 @@ class ShapeAssemblyDecoder(nn.Module):
         latent_size,
         dims,
         num_dof,
+        num_neurons_translation,
+        num_neurons_rotation,
         dropout=None,
         dropout_prob=0.0,
         norm_layers=(),
@@ -317,11 +319,14 @@ class ShapeAssemblyDecoder(nn.Module):
         predict_pose=False,
     ):
         super(ShapeAssemblyDecoder, self).__init__()
-
-        dims = [latent_size + 3] + dims + [2]  # <<<< 2 outputs instead of 1.
+        # the last layer will have 9 neurons: 2 sdf, 3 for translation, 4 for quaternion
+        #the other 7 are stored in pose_head
+        dims = [latent_size + 3] + dims + [2] 
 
         self.num_layers = len(dims)
         self.num_dof = num_dof
+        self.num_neurons_translation = num_neurons_translation
+        self.num_neurons_rotation = num_neurons_rotation
         self.norm_layers = norm_layers
         self.latent_in = latent_in
         self.latent_dropout = latent_dropout
@@ -357,7 +362,8 @@ class ShapeAssemblyDecoder(nn.Module):
                 setattr(self, "bn" + str(layer), nn.LayerNorm(out_dim))
             
             if self.predict_pose and layer == self.num_layers - 2:
-                self.pose_head = nn.Linear(dims[layer], self.num_dof)
+                self.translation_pose_head = nn.Linear(dims[layer], self.num_neurons_translation)
+                self.rotation_pose_head = nn.Linear(dims[layer], self.num_neurons_rotation)
 
 
         self.use_tanh = use_tanh
@@ -382,7 +388,10 @@ class ShapeAssemblyDecoder(nn.Module):
         for layer in range(0, self.num_layers - 1):
 
             if self.predict_pose and layer == self.num_layers - 2:
-                predicted_pose = self.pose_head(x)
+                predicted_translation = self.translation_pose_head(x)
+                predicted_quaternion = self.rotation_pose_head(x)
+                #Quaternion vector must be unit length
+                predicted_quaternion = F.normalize(predicted_quaternion, p=2, dim=1)
 
             lin = getattr(self, "lin" + str(layer))
             if layer in self.latent_in:
@@ -410,9 +419,9 @@ class ShapeAssemblyDecoder(nn.Module):
 
         # hand, object, class label
         if self.predict_pose:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_pose
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_translation, predicted_quaternion
         else:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda()
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda(), torch.Tensor([0]).cuda()
 
 class CombinedDecoder(nn.Module):
     def __init__(

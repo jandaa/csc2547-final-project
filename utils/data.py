@@ -8,6 +8,7 @@ from torchvision import transforms
 from skimage import io, transform, color
 from pathlib import Path
 import utils.misc as misc_utils
+from scipy.spatial.transform import Rotation as R
 
 
 class PointCloudInput(torch.utils.data.Dataset):
@@ -448,6 +449,10 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         transform_filename = self.transform_filenames[idx]
 
         transform = np.genfromtxt(str(transform_filename), delimiter=',')
+        translation = transform[3,0:3]
+        rotation = transform[0:3,0:3]
+        #Convert from matrix to quaternion
+        rotation = R.from_matrix(rotation).as_quat()
         
         #Sample points within epsilon of surface (negative signed distance values)
         part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
@@ -460,8 +465,9 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
             part1_surface_points, 
             part2_surface_points,
             part1_sdf_samples, 
-            part2_sdf_samples, 
-            transform
+            part2_sdf_samples,
+            translation, 
+            rotation
         )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):
