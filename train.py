@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, models, transforms
 from torch import distributions as dist
 
+from scipy.spatial.transform import Rotation
 import utils
 import networks.model as arch
 
@@ -748,12 +749,10 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     def save_latest(epoch):
         save_model(experiment_directory, "latest.pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, "latest.pth", optimizer_all, epoch)
-        # save_latent_vectors(experiment_directory, "latest.pth", lat_vecs, epoch)
 
     def save_checkpoints(epoch):
         save_model(experiment_directory, str(epoch) + ".pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, str(epoch) + ".pth", optimizer_all, epoch)
-        # save_latent_vectors(experiment_directory, str(epoch) + ".pth", lat_vecs, epoch)
 
     def signal_handler(sig, frame):
         logging.info("Stopping early...")
@@ -825,7 +824,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         encoder_part2,
         decoder,
         nb_classes,
-        subsample
+        subsample,
     )
     encoder_decoder = encoder_decoder.cuda()
 
@@ -900,22 +899,29 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     subsample * scene_per_batch, 5
                 )
                 
-                import copy
-                xyzs = copy.deepcopy(sdf_data[:, 0:3])
+                xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
-                sdf_pred_part1, sdf_pred_part2, _ = encoder_decoder(
+                sdf_pred_part1, sdf_pred_part2, pred_transformation_vec = encoder_decoder(
                                                         part1_surface_points.cuda(), 
                                                         part2_surface_points.cuda(), 
                                                         xyzs
                                                     )
 
-                # compute loses
+                # compute sdf loses
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
                 loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
 
-                loss = loss_sdf_part1 + loss_sdf_part2
+                # Compute Transformation Loss
+                rotation = torch.tensor(
+                    Rotation.from_matrix(transform[0][0:3,0:3]).as_rotvec()
+                )
+                translation = transform[0][0:3,3]
+                gt_transformation_vec = torch.cat((rotation, translation)).cuda()
+                transformation_loss = loss_l1(gt_transformation_vec, pred_transformation_vec)
+
+                loss = loss_sdf_part1 + loss_sdf_part2 + transformation_loss
 
                 loss.backward()
 

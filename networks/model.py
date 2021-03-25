@@ -314,7 +314,7 @@ class ShapeAssemblyDecoder(nn.Module):
         xyz_in_all=None,
         use_tanh=False,
         latent_dropout=False,
-        predict_pose=False,
+        predict_pose=True,
     ):
         super(ShapeAssemblyDecoder, self).__init__()
 
