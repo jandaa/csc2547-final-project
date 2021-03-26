@@ -448,11 +448,10 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part2_filename = self.part2_filenames[idx]
         transform_filename = self.transform_filenames[idx]
 
+        #ground truth transform, when applied to the part1 (aka partA) points they should be well aligned with part2 (aka partB)
         transform = np.genfromtxt(str(transform_filename), delimiter=',')
-        translation = transform[3,0:3]
-        rotation = transform[0:3,0:3]
-        #Convert from matrix to quaternion
-        rotation = R.from_matrix(rotation).as_quat()
+        #translation = transform[3,0:3]
+        #rotation = transform[0:3,0:3]
         
         #Sample points within epsilon of surface (negative signed distance values)
         part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
@@ -461,13 +460,23 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
         part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
         
+        #Don't need to return the transform, just the transformed points.
+        #this part should be well aligned with part2 after the transformation
+        #assuming transformation is for column vectors
+
+        #this transform is 4x4 so need the surface points to also have a 1 appended to them.
+        #assuming the surface_points is N x 3 create an Nx1 ones vector and concat
+        b = np.ones((part1_surface_points.shape[0],1))
+        part1_surface_points_homog = np.concatenate((part1_surface_points,b), axis = 1)
+        gt_transformed_part1_points = np.dot(part1_surface_points_homog,transform.transpose())[:,:4]
+        gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
+
         return (
             part1_surface_points, 
             part2_surface_points,
             part1_sdf_samples, 
             part2_sdf_samples,
-            translation, 
-            rotation
+            gt_transformed_part1_points
         )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):

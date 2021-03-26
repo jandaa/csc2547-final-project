@@ -17,6 +17,7 @@ from torch import distributions as dist
 
 import utils
 import networks.model as arch
+from pytorch3d.transforms import quaternion_apply
 
 # import reconstruct
 # import evaluate
@@ -837,7 +838,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     logging.debug(encoder_decoder)
 
     loss_l1 = torch.nn.L1Loss(reduction='sum')
-    loss_l2 = torch.nn.MSELoss(reduction='sum')
+    loss_l1_avg = torch.nn.L1Loss(reduction='avg')
 
     optimizer_all = torch.optim.Adam(
         [
@@ -886,7 +887,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             part2_surface_points, 
             part1_sdf_samples, 
             part2_sdf_samples, 
-            translation, rotation) in enumerate(sdf_loader):
+            gt_transformed_part1_points) in enumerate(sdf_loader):
 
             batch_loss = 0.0
             optimizer_all.zero_grad()
@@ -912,13 +913,18 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                                                         xyzs
                                                     )
 
+                #apply the predicted transformation to the points
+                #Should return Nx3 transformed points
+                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1_surface_points)
+                predicted_transformed_part1_points = torch.add(predicted_rotated_part1_points,predicted_translation)
+
                 # compute loses
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
                 loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
-                loss_translation = loss_l2(predicted_translation, translation)
-                loss_rotation = loss_l2(rotation, predicted_rotation)
+                
+                loss_transformation = loss_l1_avg(gt_transformed_part1_points, predicted_transformed_part1_points)
 
-                loss = loss_sdf_part1 + loss_sdf_part2 + loss_translation + loss_rotation
+                loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
 
                 loss.backward()
 
