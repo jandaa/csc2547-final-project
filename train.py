@@ -1,23 +1,27 @@
 import warnings
+
 warnings.filterwarnings('ignore',category=FutureWarning)
-import torch
-import torch.utils.data as data_utils
+import json
+import logging
+import os
 import signal
 import sys
-import os
-import logging
-import numpy as np
-import json
 import time
 from pathlib import Path
 
+from mesh_to_sdf import mesh_to_sdf
+import trimesh
+
+import numpy as np
+import torch
+import torch.utils.data as data_utils
+from pytorch3d.transforms import quaternion_apply
+from torch import distributions as dist
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, models, transforms
-from torch import distributions as dist
 
-import utils
 import networks.model as arch
-from pytorch3d.transforms import quaternion_apply
+import utils
 
 # import reconstruct
 # import evaluate
@@ -775,6 +779,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
 
     data_source = Path(specs["DataSource"])
     train_split_file = specs["TrainSplit"]
+    val_split_file = specs["ValSplit"]
     subsample = specs["SamplesPerScene"]
     scene_per_batch = specs["ScenesPerBatch"]
     latent_size = specs["LatentSize"]
@@ -800,11 +805,22 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     with open(train_split_file, "r") as f:
         train_split = json.load(f)
 
+    with open(val_split_file, "r") as f:
+        val_split = json.load(f)
+
     sdf_dataset = utils.data.SDFAssemblySamples(data_source, train_split, subsample)
+    sdf_val_dataset = utils.data.SDFAssemblySamples(data_source, val_split, subsample)
 
     sdf_loader = data_utils.DataLoader(
         sdf_dataset,
         batch_size=scene_per_batch,
+        shuffle=True,
+        num_workers=num_data_loader_threads,
+        drop_last=True
+    )
+    sdf_val_loader = data_utils.DataLoader(
+        sdf_val_dataset,
+        batch_size=1,
         shuffle=True,
         num_workers=num_data_loader_threads,
         drop_last=True
@@ -887,7 +903,11 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             part2_surface_points, 
             part1_sdf_samples, 
             part2_sdf_samples, 
-            gt_transformed_part1_points) in enumerate(sdf_loader):
+            part1_interface_points, 
+            part2_interface_points, 
+            gt_transformed_part1_points,
+            part1_mesh_filename,
+            part2_mesh_filename) in enumerate(sdf_loader):
 
             batch_loss = 0.0
             optimizer_all.zero_grad()
@@ -902,8 +922,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     subsample * scene_per_batch, 5
                 )
                 
-                import copy
-                xyzs = copy.deepcopy(sdf_data[:, 0:3])
+                xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
@@ -954,9 +973,50 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         if epoch in checkpoints:
             save_checkpoints(epoch)
 
-        if epoch % log_frequency == 0:
-            save_latest(epoch)
-            print("save at {}".format(epoch))
+            total_validation_error = 0
+            # Run validation
+            for i, (
+                part1_surface_points, 
+                part2_surface_points, 
+                part1_sdf_samples, 
+                part2_sdf_samples, 
+                part1_interface_points, 
+                part2_interface_points, 
+                gt_transformed_part1_points,
+                part1_mesh_filename,
+                part2_mesh_filename) in enumerate(sdf_val_loader):
+                
+                xyzs = sdf_data[:, 0:3]
+                sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
+                sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
+                
+                _, _, predicted_translation, predicted_rotation = encoder_decoder(
+                                                        part1_surface_points.cuda(), 
+                                                        part2_surface_points.cuda(), 
+                                                        xyzs
+                                                    )
+
+                #apply the predicted transformation to the points
+                #Should return Nx3 transformed points
+                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1_interface_points)
+                predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
+                
+                # 
+                mesh1 = trimesh.load(part1_mesh_filename)
+                mesh2 = trimesh.load(part2_mesh_filename)
+
+                sdf1 = mesh_to_sdf(mesh2, part1_interface_points.to_numpy())
+                sdf2 = mesh_to_sdf(mesh1, part2_interface_points.to_numpy())
+
+                cardinality = len(sdf1)+len(sdf2)
+                val_metric = (1/cardinality)*(sdf1.sum()+sdf2.sum())
+                total_validation_error += val_metric
+            
+            logging.info(f"Epoch {epoch}: Validation Error: {total_validation_error}")
+
+        # if epoch % log_frequency == 0:
+        #     save_latest(epoch)
+        #     print("save at {}".format(epoch))
 
 
 if __name__ == "__main__":

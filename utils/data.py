@@ -248,7 +248,14 @@ def get_instance_filenames(data_source, input_type, encoder_input_source, split,
     return npzfiles_hand, npzfiles_obj, normalization_params, encoder_input_files
 
 def get_shape_assembly_filenames(data_source: Path, scenes):
-
+    part1_mesh_filenames = [
+        data_source / scene / "partA.obj"
+        for scene in scenes
+    ]
+    part2_mesh_filenames = [
+        data_source / scene / "partB.obj"
+        for scene in scenes
+    ]
     part1_filenames = [
         data_source / scene / "partA.npz"
         for scene in scenes
@@ -261,8 +268,24 @@ def get_shape_assembly_filenames(data_source: Path, scenes):
         data_source / scene / "transform.csv"
         for scene in scenes
     ]
+    part1_interface_filenames = [
+        data_source / scene / "partA_interface.csv"
+        for scene in scenes
+    ]
+    part2_interface_filenames = [
+        data_source / scene / "partB_interface.csv"
+        for scene in scenes
+    ]
     
-    return part1_filenames, part2_filenames, transform_filenames
+    return (
+        part1_filenames, 
+        part2_filenames, 
+        transform_filenames, 
+        part1_interface_filenames, 
+        part2_interface_filenames,
+        part1_mesh_filenames,
+        part2_mesh_filenames
+    )
 
 def get_negative_surface_points(filename=None, pc_sample=500, surface_dist=0.005, data=None):
 
@@ -435,7 +458,11 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
 
         (self.part1_filenames,
          self.part2_filenames,
-         self.transform_filenames) = get_shape_assembly_filenames(data_source, split)
+         self.transform_filenames,
+         self.part1_interface_filenames,
+         self.part2_interface_filenames,
+         self.part1_mesh_filenames,
+         self.part2_mesh_filenames) = get_shape_assembly_filenames(data_source, split)
 
         self.same_point = same_point
         self.clamp = clamp
@@ -446,6 +473,10 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         part1_filename = self.part1_filenames[idx]
         part2_filename = self.part2_filenames[idx]
+        part1_mesh_filename = self.part1_mesh_filenames[idx]
+        part2_mesh_filename = self.part2_mesh_filenames[idx]
+        part1_interface_filename = self.part1_interface_filenames[idx]
+        part2_interface_filename = self.part2_interface_filenames[idx]
         transform_filename = self.transform_filenames[idx]
 
         #ground truth transform, when applied to the part1 (aka partA) points they should be well aligned with part2 (aka partB)
@@ -457,6 +488,9 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
         part2_surface_points = get_negative_surface_points(part2_filename, self.pc_sample)
 
+        part1_interface_points = np.genfromtxt(str(part1_interface_filename), delimiter=',')
+        part2_interface_points = np.genfromtxt(str(part2_interface_filename), delimiter=',')
+
         part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
         part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
         
@@ -467,8 +501,8 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         #this transform is 4x4 so need the surface points to also have a 1 appended to them.
         #assuming the surface_points is N x 3 create an Nx1 ones vector and concat
         b = np.ones((part1_surface_points.shape[0],1))
-        part1_surface_points_homog = np.concatenate((part1_surface_points,b), axis = 1)
-        gt_transformed_part1_points = np.dot(part1_surface_points_homog,transform.transpose())[:,:4]
+        part1_surface_points_homog = np.concatenate((part1_surface_points, b), axis = 1)
+        gt_transformed_part1_points = np.dot(part1_surface_points_homog, transform.transpose())[:,:4]
         gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
 
         return (
@@ -476,7 +510,11 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
             part2_surface_points,
             part1_sdf_samples, 
             part2_sdf_samples,
-            gt_transformed_part1_points
+            part1_interface_points,
+            part2_interface_points,
+            gt_transformed_part1_points,
+            part1_mesh_filename,
+            part2_mesh_filename
         )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):
