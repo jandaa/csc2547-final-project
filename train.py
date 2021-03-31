@@ -854,7 +854,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     logging.debug(encoder_decoder)
 
     loss_l1 = torch.nn.L1Loss(reduction='sum')
-    loss_l1_avg = torch.nn.L1Loss(reduction='avg')
+    loss_l1_avg = torch.nn.L1Loss(reduction='mean')
 
     optimizer_all = torch.optim.Adam(
         [
@@ -899,49 +899,50 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
 
         for i, (
-            part1_surface_points, 
-            part2_surface_points, 
-            part1_sdf_samples, 
-            part2_sdf_samples, 
-            part1_interface_points, 
-            part2_interface_points, 
-            gt_transformed_part1_points,
-            part1_mesh_filename,
-            part2_mesh_filename) in enumerate(sdf_loader):
+            part1,
+            part2,
+            gt_transformed_part1_points) in enumerate(sdf_loader):
 
             batch_loss = 0.0
             optimizer_all.zero_grad()
 
             for _subbatch in range(batch_split):
 
-                samples = part2_sdf_samples
+                samples = part2["sdf_samples"]
 
                 samples.requires_grad = False
 
                 sdf_data = (samples.cuda()).reshape(
                     subsample * scene_per_batch, 5
                 )
+
+                part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).cuda()
                 
                 xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
                 sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
-                                                        part1_surface_points.cuda(), 
-                                                        part2_surface_points.cuda(), 
-                                                        xyzs
+                                                        part1["surface_points"].cuda(), 
+                                                        part2["surface_points"].cuda(), 
+                                                        xyzs,
+                                                        part1_transform_vec
                                                     )
 
                 #apply the predicted transformation to the points
                 #Should return Nx3 transformed points
-                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1_surface_points)
+                predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
+                predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
+                predicted_rotation = predicted_rotation.cuda()
+                part1["surface_points"] = part1["surface_points"].cuda()
+                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
                 predicted_transformed_part1_points = torch.add(predicted_rotated_part1_points,predicted_translation)
 
                 # compute loses
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
                 loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
                 
-                loss_transformation = loss_l1_avg(gt_transformed_part1_points, predicted_transformed_part1_points)
+                loss_transformation = loss_l1_avg(gt_transformed_part1_points.cuda(), predicted_transformed_part1_points)
 
                 loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
 
@@ -976,29 +977,31 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             total_validation_error = 0
             # Run validation
             for i, (
-                part1_surface_points, 
-                part2_surface_points, 
-                part1_sdf_samples, 
-                part2_sdf_samples, 
-                part1_interface_points, 
-                part2_interface_points, 
-                gt_transformed_part1_points,
-                part1_mesh_filename,
-                part2_mesh_filename) in enumerate(sdf_val_loader):
+                part1,
+                part2,
+                gt_transformed_part1_points) in enumerate(sdf_val_loader):
+
+                samples = part2["sdf_samples"]
+
+                samples.requires_grad = False
+
+                sdf_data = (samples.cuda()).reshape(
+                    subsample * scene_per_batch, 5
+                )
                 
                 xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
                 _, _, predicted_translation, predicted_rotation = encoder_decoder(
-                                                        part1_surface_points.cuda(), 
-                                                        part2_surface_points.cuda(), 
+                                                        part1["surface_points"].cuda(), 
+                                                        part2["surface_points"].cuda(), 
                                                         xyzs
                                                     )
 
                 #apply the predicted transformation to the points
                 #Should return Nx3 transformed points
-                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1_interface_points)
+                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["interface_points"])
                 predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
                 
                 # 
@@ -1013,10 +1016,6 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 total_validation_error += val_metric
             
             logging.info(f"Epoch {epoch}: Validation Error: {total_validation_error}")
-
-        # if epoch % log_frequency == 0:
-        #     save_latest(epoch)
-        #     print("save at {}".format(epoch))
 
 
 if __name__ == "__main__":

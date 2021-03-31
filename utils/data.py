@@ -9,7 +9,9 @@ from skimage import io, transform, color
 from pathlib import Path
 import utils.misc as misc_utils
 from scipy.spatial.transform import Rotation as R
-
+from sklearn.decomposition import PCA
+from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion
+from dataclasses import dataclass
 
 class PointCloudInput(torch.utils.data.Dataset):
     def __init__(
@@ -305,6 +307,26 @@ def get_negative_surface_points(filename=None, pc_sample=500, surface_dist=0.005
 
     return sample_neg
 
+def computer_center_axis(points, idx):
+    max_axis = max(point[idx] for point in points)
+    min_axis = min(point[idx] for point in points)
+
+    return (max_axis - min_axis) / 2.0
+
+def compute_center(points):
+    return torch.from_numpy(
+        np.array([
+            computer_center_axis(points, i)
+            for i in range(3)
+        ])
+    )
+
+def compute_rotation_quanternion(points):
+    pca = PCA(n_components=3)
+    pca.fit(points)
+    return matrix_to_quaternion(
+        torch.from_numpy(pca.components_)
+    )
 
 class SDFSamples(torch.utils.data.Dataset):
     def __init__(
@@ -435,6 +457,15 @@ class SDFSamples(torch.utils.data.Dataset):
             return (hand_samples, hand_labels, obj_samples, obj_labels,
                     scale, offset, encoder_input_hand, encoder_input_obj, self.npyfiles_hand[idx])
 
+@dataclass
+class PartData:
+    surface_points: torch.tensor = torch.empty(0)
+    sdf_samples: torch.tensor = torch.empty(0)
+    interface_points: torch.tensor = torch.empty(0)
+    center: torch.tensor = torch.empty(0)
+    quanternion: torch.tensor = torch.empty(0)
+    mesh_filename: str = ""
+
 class SDFAssemblySamples(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -473,26 +504,31 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         part1_filename = self.part1_filenames[idx]
         part2_filename = self.part2_filenames[idx]
-        part1_mesh_filename = self.part1_mesh_filenames[idx]
-        part2_mesh_filename = self.part2_mesh_filenames[idx]
         part1_interface_filename = self.part1_interface_filenames[idx]
         part2_interface_filename = self.part2_interface_filenames[idx]
         transform_filename = self.transform_filenames[idx]
 
+        part1 = {}
+        part2 = {}
+
+        part1["mesh_filename"] = str(self.part1_mesh_filenames[idx])
+        part2["mesh_filename"] = str(self.part2_mesh_filenames[idx])
+
         #ground truth transform, when applied to the part1 (aka partA) points they should be well aligned with part2 (aka partB)
         transform = np.genfromtxt(str(transform_filename), delimiter=',')
-        #translation = transform[3,0:3]
-        #rotation = transform[0:3,0:3]
         
         #Sample points within epsilon of surface (negative signed distance values)
-        part1_surface_points = get_negative_surface_points(part1_filename, self.pc_sample)
-        part2_surface_points = get_negative_surface_points(part2_filename, self.pc_sample)
+        part1["surface_points"] = get_negative_surface_points(part1_filename, self.pc_sample)
+        part2["surface_points"] = get_negative_surface_points(part2_filename, self.pc_sample)
 
-        part1_interface_points = np.genfromtxt(str(part1_interface_filename), delimiter=',')
-        part2_interface_points = np.genfromtxt(str(part2_interface_filename), delimiter=',')
+        part1["interface_points"] = np.zeros((500,3))
+        part2["interface_points"] = np.zeros((500,3))
 
-        part1_sdf_samples = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
-        part2_sdf_samples = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
+        # part1.interface_points = np.genfromtxt(str(part1_interface_filename), delimiter=',')
+        # part2.interface_points = np.genfromtxt(str(part2_interface_filename), delimiter=',')
+
+        part1["sdf_samples"] = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
+        part2["sdf_samples"] = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
         
         #Don't need to return the transform, just the transformed points.
         #this part should be well aligned with part2 after the transformation
@@ -500,21 +536,23 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
 
         #this transform is 4x4 so need the surface points to also have a 1 appended to them.
         #assuming the surface_points is N x 3 create an Nx1 ones vector and concat
-        b = np.ones((part1_surface_points.shape[0],1))
-        part1_surface_points_homog = np.concatenate((part1_surface_points, b), axis = 1)
-        gt_transformed_part1_points = np.dot(part1_surface_points_homog, transform.transpose())[:,:4]
+        b = np.ones((part1["surface_points"].shape[0],1))
+        part1_surface_points_homog = np.concatenate((part1["surface_points"], b), axis = 1)
+        gt_transformed_part1_points = np.dot(part1_surface_points_homog, transform.transpose())[:,:3]
         gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
 
+        # Compute object center
+        part1["center"] = compute_center(part1["surface_points"])
+        part2["center"] = compute_center(part2["surface_points"])
+
+        # compute rotation matrices
+        part1["quaternion"] = compute_rotation_quanternion(part1["surface_points"])
+        part2["quaternion"] = compute_rotation_quanternion(part2["surface_points"])
+        
         return (
-            part1_surface_points, 
-            part2_surface_points,
-            part1_sdf_samples, 
-            part2_sdf_samples,
-            part1_interface_points,
-            part2_interface_points,
-            gt_transformed_part1_points,
-            part1_mesh_filename,
-            part2_mesh_filename
+            part1,
+            part2,
+            gt_transformed_part1_points
         )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):

@@ -288,15 +288,16 @@ class ModelShapeAssemblyEncoderDecoderVAE(nn.Module):
         self.num_class = nb_classes
         self.num_sdf_samp_per_scene = num_sdf_samp_per_scene
 
-    def forward(self, part1_points, part2_points, xyzs):
+    def forward(self, part1_points, part2_points, xyzs, part1_transform_vec):
         part1_encoding = self.encoder_part1(part1_points)
         part2_encoding = self.encoder_part1(part2_points)
 
         latent_part1 = part1_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
         latent_part2 = part2_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
+        part1_transform_vec_repeated = part1_transform_vec.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
 
         latent = torch.cat([latent_part1, latent_part2], 1)
-        decoder_inputs = torch.cat([latent, xyzs], 1)
+        decoder_inputs = torch.cat([latent, xyzs, part1_transform_vec_repeated], 1)
 
         return self.decoder(decoder_inputs)
 
@@ -316,12 +317,12 @@ class ShapeAssemblyDecoder(nn.Module):
         xyz_in_all=None,
         use_tanh=False,
         latent_dropout=False,
-        predict_pose=False,
+        predict_pose=True,
     ):
         super(ShapeAssemblyDecoder, self).__init__()
         # the last layer will have 9 neurons: 2 sdf, 3 for translation, 4 for quaternion
         #the other 7 are stored in pose_head
-        dims = [latent_size + 3] + dims + [2] 
+        dims = [latent_size + 3 + 7] + dims + [2] 
 
         self.num_layers = len(dims)
         self.num_dof = num_dof
@@ -380,9 +381,10 @@ class ShapeAssemblyDecoder(nn.Module):
 
         # Apply dropout only on latent vector
         xyz = input[:, -3:]
-        latent_vecs = input[:, :-3]
+        latent_vecs = input[:, :-10]
+        transformation_vecs = input[:, -10:-3]
         latent_vecs = F.dropout(latent_vecs, p=0.2, training=self.training)
-        x = torch.cat([latent_vecs, xyz], 1)
+        x = torch.cat([latent_vecs, transformation_vecs, xyz], 1)
 
 
         for layer in range(0, self.num_layers - 1):
