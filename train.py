@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+# Headless mesh to sdf
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
 from mesh_to_sdf import mesh_to_sdf
 import trimesh
 
@@ -904,7 +906,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             gt_transformed_part1_points) in enumerate(sdf_loader):
 
             batch_loss = 0.0
-            optimizer_all.zero_grad()
+            optimizer_all.zero_grad()      
 
             for _subbatch in range(batch_split):
 
@@ -942,7 +944,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
                 loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
                 
-                loss_transformation = loss_l1_avg(gt_transformed_part1_points.cuda(), predicted_transformed_part1_points)
+                loss_transformation = 100 * loss_l1_avg(gt_transformed_part1_points.cuda(), predicted_transformed_part1_points)
 
                 loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
 
@@ -989,13 +991,13 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     subsample * scene_per_batch, 5
                 )
                 
-                part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).cuda()
-                
                 xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
                 sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
                 
-                sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
+                part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).cuda()
+
+                _, _, predicted_translation, predicted_rotation = encoder_decoder(
                                                         part1["surface_points"].cuda(), 
                                                         part2["surface_points"].cuda(), 
                                                         xyzs,
@@ -1004,15 +1006,26 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
 
                 #apply the predicted transformation to the points
                 #Should return Nx3 transformed points
-                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["interface_points"])
+                predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
+                predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
+                predicted_rotation = predicted_rotation.cuda()
+                part1["surface_points"] = part1["surface_points"].cuda()
+                predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
                 predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
+
+                
+                # predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["interface_points"])
+                # predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
                 
                 # 
-                mesh1 = trimesh.load(part1_mesh_filename)
-                mesh2 = trimesh.load(part2_mesh_filename)
+                mesh1 = trimesh.load(part1["mesh_filename"][0])
+                mesh2 = trimesh.load(part2["mesh_filename"][0])
 
-                sdf1 = mesh_to_sdf(mesh2, part1_interface_points.to_numpy())
-                sdf2 = mesh_to_sdf(mesh1, part2_interface_points.to_numpy())
+                part1["interface_points"] = part1["interface_points"].numpy().reshape((-1,3))
+                part2["interface_points"] = part2["interface_points"].numpy().reshape((-1,3))
+                
+                sdf1 = mesh_to_sdf(mesh2, part1["interface_points"], surface_point_method="sample")
+                sdf2 = mesh_to_sdf(mesh1, part2["interface_points"], surface_point_method="sample")
 
                 cardinality = len(sdf1)+len(sdf2)
                 val_metric = (1/cardinality)*(sdf1.sum()+sdf2.sum())

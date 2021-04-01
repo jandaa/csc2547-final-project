@@ -1,6 +1,6 @@
 {
     "Description" : "Hand-object together, test point cloud input",
-    "DataSource" : "./shape_assembly/processed_data",
+    "DataSource" : "~/mesh_output",
     "ImageSource" : "",
     "TrainSplit" : "./shape_assembly/train_split.json",
     "ValSplit" : "./shape_assembly/test_split.json",

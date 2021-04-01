@@ -271,11 +271,11 @@ def get_shape_assembly_filenames(data_source: Path, scenes):
         for scene in scenes
     ]
     part1_interface_filenames = [
-        data_source / scene / "partA_interface.csv"
+        data_source / scene / "pointA.csv"
         for scene in scenes
     ]
     part2_interface_filenames = [
-        data_source / scene / "partB_interface.csv"
+        data_source / scene / "pointB.csv"
         for scene in scenes
     ]
     
@@ -318,14 +318,14 @@ def compute_center(points):
         np.array([
             computer_center_axis(points, i)
             for i in range(3)
-        ])
+        ]).astype(np.float32)
     )
 
 def compute_rotation_quanternion(points):
     pca = PCA(n_components=3)
     pca.fit(points)
     return matrix_to_quaternion(
-        torch.from_numpy(pca.components_)
+        torch.from_numpy(pca.components_.astype(np.float32))
     )
 
 class SDFSamples(torch.utils.data.Dataset):
@@ -521,11 +521,8 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part1["surface_points"] = get_negative_surface_points(part1_filename, self.pc_sample)
         part2["surface_points"] = get_negative_surface_points(part2_filename, self.pc_sample)
 
-        part1["interface_points"] = np.zeros((500,3))
-        part2["interface_points"] = np.zeros((500,3))
-
-        # part1.interface_points = np.genfromtxt(str(part1_interface_filename), delimiter=',')
-        # part2.interface_points = np.genfromtxt(str(part2_interface_filename), delimiter=',')
+        part1["interface_points"] = np.genfromtxt(str(part1_interface_filename), delimiter=',', dtype=np.float64)
+        part2["interface_points"] = np.genfromtxt(str(part2_interface_filename), delimiter=',', dtype=np.float64)
 
         part1["sdf_samples"] = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
         part2["sdf_samples"] = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)

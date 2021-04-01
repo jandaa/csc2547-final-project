@@ -141,3 +141,7 @@ mano/models/
 output/
 input/
 data/
+*.pth
+*.0
+scripts/sample_points/bin/
+scripts/sample_points/third-party/
