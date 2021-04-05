@@ -786,8 +786,13 @@ def shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_
         predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
 
         
-        # predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["interface_points"])
-        # predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
+        # compute loses
+        loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
+        loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
+        
+        loss_transformation = 100 * loss_l1_avg(gt_transformed_part1_points.cuda(), predicted_transformed_part1_points)
+
+        loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
         
         # 
         mesh1 = trimesh.load(part1["mesh_filename"][0])
@@ -806,7 +811,7 @@ def shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_
         cardinality = len(sdf1)+len(sdf2)
         val_metric = (1/cardinality)*(sdf1.sum()+sdf2.sum())
 
-        return val_metric
+        return val_metric, loss.item()
 
 def shape_assembly_main_function(experiment_directory, continue_from, batch_split):
 
@@ -959,6 +964,9 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
 
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
 
+        #signify to model we are training
+        encoder_decoder.train()
+
         for i, (
             part1,
             part2,
@@ -1038,17 +1046,26 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         
         if epoch in checkpoints:
             save_checkpoints(epoch)
+            #signify to model we are not training but evaluating.
+            encoder_decoder.eval()
 
             total_validation_error = 0
+            avg_val_loss = 0.0
             # Run validation
             for i, (
                 part1,
                 part2,
                 gt_transformed_part1_points) in enumerate(sdf_val_loader):
 
-                total_validation_error += shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_per_batch)
+                total_validation_error, avg_val_loss += shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_per_batch)
             
-            logging.info(f"Epoch {epoch}: Validation Error: {total_validation_error / len(sdf_val_loader)}")
+            writer.add_scalar('validation_metric_1e-3', total_validation_error * 1000.0, (epoch-1))
+            logging.info(f"Epoch {epoch}: Validation Metric: {total_validation_error}")
+
+            avg_val_loss = avg_val_loss / len(sdf_val_loader)
+
+            writer.add_scalar('validation_loss_1e-3', avg_val_loss * 1000.0, (epoch-1))
+            logging.info(f"Epoch {epoch}: Validation Loss: {avg_val_loss}")
 
 
 if __name__ == "__main__":
