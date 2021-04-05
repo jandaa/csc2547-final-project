@@ -9,10 +9,10 @@ import sys
 import time
 from threading import Thread
 from pathlib import Path
+import copy
 
 # Headless mesh to sdf
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
-from mesh_to_sdf import mesh_to_sdf
 import trimesh
 
 import numpy as np
@@ -20,12 +20,16 @@ import torch
 import torch.utils.data as data_utils
 import torch.multiprocessing as mp
 from pytorch3d.transforms import quaternion_apply
+from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix
 from torch import distributions as dist
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, models, transforms
 
 import networks.model as arch
 import utils
+
+import open3d as o3d
+import plotly.graph_objects as go
 
 device = torch.device('cpu')
 
@@ -35,7 +39,7 @@ def get_spec_with_default(specs, key, default):
     except KeyError:
         return default
 
-def shape_assembly_val_function(part1, part2, gt_transformation, encoder_decoder, subsample, scene_per_batch):
+def shape_assembly_visualization_function(part1, part2, encoder_decoder, subsample, scene_per_batch):
 
         samples = part2["sdf_samples"]
 
@@ -58,37 +62,42 @@ def shape_assembly_val_function(part1, part2, gt_transformation, encoder_decoder
                                                 part1_transform_vec
                                             )
 
-        #apply the predicted transformation to the points
-        #Should return Nx3 transformed points
-        predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
-        predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
-        predicted_rotation = predicted_rotation.to(device)
-        part1["surface_points"] = part1["surface_points"].to(device)
-        predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
-        predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
+        mesh1 = o3d.io.read_triangle_mesh(part1["mesh_filename"][0])
+        mesh2 = o3d.io.read_triangle_mesh(part2["mesh_filename"][0])
 
-        translation_error_avg = predicted_translation - gt_transformation[:3,3]
-        rotation_error = predicted_rotation - gt_transformation[:3,:3]
-        # 
-        mesh1 = trimesh.load(part1["mesh_filename"][0])
-        mesh2 = trimesh.load(part2["mesh_filename"][0])
+        mesh1.compute_vertex_normals()
+        mesh2.compute_vertex_normals()
 
-        part1["interface_points"] = part1["interface_points"].numpy().reshape((-1,3))[:50]
-        part2["interface_points"] = part2["interface_points"].numpy().reshape((-1,3))[:50]
+        mesh1.paint_uniform_color([1, 0.706, 0])
+        mesh2.paint_uniform_color([0.706, 1, 0])
 
-        sdf1 = mesh_to_sdf(mesh2, part1["interface_points"], surface_point_method="sample")
-        sdf2 = mesh_to_sdf(mesh1, part2["interface_points"], surface_point_method="sample")
+        o3d.visualization.draw_geometries([mesh1, mesh2])
 
-        # Use absolute values
-        sdf1 = np.abs(sdf1)
-        sdf2 = np.abs(sdf2)
+        predicted_rotation = quaternion_to_matrix(predicted_rotation)
 
-        cardinality = len(sdf1)+len(sdf2)
-        val_metric = (1/cardinality)*(sdf1.sum()+sdf2.sum())
+        predicted_rotation = predicted_rotation.detach()
+        predicted_translation = predicted_translation.detach()
 
-        return val_metric
+        transformation = np.zeros((4,4))
+        transformation[3,3] = 1
 
-def run_validation(experiment_directory):
+        for point_ind in range(subsample):
+            
+            transformation[:3,:3] = predicted_rotation[point_ind].numpy()
+            transformation[:3,3] = predicted_translation[point_ind].numpy()
+
+            # Rotate mesh1 to be aligned with mesh2
+            new_mesh = copy.deepcopy(mesh1)
+
+            for i in range(len(new_mesh.vertices)):
+                new_mesh.vertices[i] = np.dot(new_mesh.vertices[i], predicted_rotation[point_ind].numpy()) + predicted_translation[point_ind].numpy()
+
+            # new_mesh = new_mesh.transform(transformation)
+            o3d.visualization.draw_geometries([new_mesh, mesh2])
+
+        return
+
+def run_visualization(experiment_directory, checkpoint):
 
     specs = utils.misc.load_experiment_specifications(experiment_directory)
 
@@ -111,6 +120,7 @@ def run_validation(experiment_directory):
     with open(val_split_file, "r") as f:
         val_split = json.load(f)
 
+    # sdf_dataset = utils.data.SDFAssemblySamples(data_source, train_split, subsample)
     sdf_val_dataset = utils.data.SDFAssemblySamples(data_source, val_split, subsample)
 
     sdf_val_loader = data_utils.DataLoader(
@@ -142,30 +152,21 @@ def run_validation(experiment_directory):
     encoder_decoder = encoder_decoder.to(device)
     encoder_decoder.share_memory()
 
-    writer = SummaryWriter(os.path.join(experiment_directory, 'log'))
+    model_epoch = utils.misc.load_model_parameters(
+        experiment_directory, checkpoint, encoder_decoder
+    )
 
-    model_parameters_path = Path(experiment_directory) / "ModelParameters"
-    for model_snapshot in model_parameters_path.iterdir():
+    logging.info("Loaded weights!")
 
-        logging.info("Running validation with weights: " + model_snapshot.stem)
+    total_validation_error = 0
+    # Run validation
+    for i, (
+        part1,
+        part2,
+        gt_transformed_part1_points,
+        gt_transform) in enumerate(sdf_val_loader):
 
-        model_epoch = utils.misc.load_model_parameters(
-            experiment_directory, model_snapshot.stem, encoder_decoder
-        )
-
-        logging.info("Loaded weights!")
-
-        total_validation_error = 0
-        # Run validation
-        for i, (
-            part1,
-            part2,
-            gt_transformed_part1_points,
-            gt_transform) in enumerate(sdf_val_loader):
-
-            total_validation_error += shape_assembly_val_function(part1, part2, gt_transform, encoder_decoder, subsample, scene_per_batch)
-
-        writer.add_scalar('validation_loss', total_validation_error / len(sdf_val_loader), model_epoch)
+            shape_assembly_visualization_function(part1, part2, encoder_decoder, subsample, scene_per_batch)
 
 if __name__ == "__main__":
 
@@ -181,6 +182,13 @@ if __name__ == "__main__":
         + "experiment specifications in 'specs.json', and logging will be "
         + "done in this directory as well.",
     )
+    arg_parser.add_argument(
+        "--checkpoint",
+        "-c",
+        dest="checkpoint",
+        required=True,
+        help="The checkpoint to load weights from.",
+    )
 
     utils.add_common_args(arg_parser)
 
@@ -188,4 +196,4 @@ if __name__ == "__main__":
 
     utils.configure_logging(args)
     
-    run_validation(args.experiment_directory)
+    run_visualization(args.experiment_directory, args.checkpoint)

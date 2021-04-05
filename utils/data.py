@@ -13,6 +13,8 @@ from sklearn.decomposition import PCA
 from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion
 from dataclasses import dataclass
 
+device = torch.device('cpu')
+
 class PointCloudInput(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -457,15 +459,6 @@ class SDFSamples(torch.utils.data.Dataset):
             return (hand_samples, hand_labels, obj_samples, obj_labels,
                     scale, offset, encoder_input_hand, encoder_input_obj, self.npyfiles_hand[idx])
 
-@dataclass
-class PartData:
-    surface_points: torch.tensor = torch.empty(0)
-    sdf_samples: torch.tensor = torch.empty(0)
-    interface_points: torch.tensor = torch.empty(0)
-    center: torch.tensor = torch.empty(0)
-    quanternion: torch.tensor = torch.empty(0)
-    mesh_filename: str = ""
-
 class SDFAssemblySamples(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -515,7 +508,7 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part2["mesh_filename"] = str(self.part2_mesh_filenames[idx])
 
         #ground truth transform, when applied to the part1 (aka partA) points they should be well aligned with part2 (aka partB)
-        transform = np.genfromtxt(str(transform_filename), delimiter=',')
+        gt_transform = np.genfromtxt(str(transform_filename), delimiter=',')
         
         #Sample points within epsilon of surface (negative signed distance values)
         part1["surface_points"] = get_negative_surface_points(part1_filename, self.pc_sample)
@@ -533,9 +526,7 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
 
         #this transform is 4x4 so need the surface points to also have a 1 appended to them.
         #assuming the surface_points is N x 3 create an Nx1 ones vector and concat
-        b = np.ones((part1["surface_points"].shape[0],1))
-        part1_surface_points_homog = np.concatenate((part1["surface_points"], b), axis = 1)
-        gt_transformed_part1_points = np.dot(part1_surface_points_homog, transform.transpose())[:,:3]
+        gt_transformed_part1_points = np.dot(part1["surface_points"], gt_transform[0:3,0:3]) + gt_transform[0:3,3]
         gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
 
         # Compute object center
@@ -549,7 +540,8 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         return (
             part1,
             part2,
-            gt_transformed_part1_points
+            gt_transformed_part1_points,
+            gt_transform
         )
 
 def normalize_obj_center(encoder_input_hand, encoder_input_obj, hand_samples=None, obj_samples=None, scale=1.0):

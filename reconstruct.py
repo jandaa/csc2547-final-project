@@ -245,11 +245,11 @@ def reconstruct_training(experiment_directory,
         encoderDecoder.eval()
         # encoderDecoder.encoder.eval()
         # print(image.shape)
-        encoder_input_hand = encoder_input_hand.cuda()
+        encoder_input_hand = encoder_input_hand.to(device)
         if input_type == 'image':
             encoder_input_obj = encoder_input_hand
         else:
-            encoder_input_obj = encoder_input_obj.cuda()
+            encoder_input_obj = encoder_input_obj.to(device)
         # print(image[0,0,:5,:5])
         # print(image[:3])
         # print(image.size())

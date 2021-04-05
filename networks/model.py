@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch import distributions as dist
 from torchvision import datasets, models, transforms
 
+device = torch.device('cpu')
 
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)
@@ -227,13 +228,13 @@ class ModelTwoEncodersOneDecoderVAE(nn.Module):
             logstd_z = x_hand[:, self.hand_encoder_c_dim:]  # second half
         else:
             batch_size = x_obj.size(0)
-            mean_z = torch.empty(batch_size, 0).cuda()
-            logstd_z = torch.empty(batch_size, 0).cuda()
+            mean_z = torch.empty(batch_size, 0).to(device)
+            logstd_z = torch.empty(batch_size, 0).to(device)
         q_z = dist.Normal(mean_z, torch.exp(logstd_z))
         z_hand = q_z.rsample()
 
         # KL-divergence
-        p0_z = dist.Normal(torch.zeros(self.hand_encoder_c_dim).cuda(), torch.ones(self.hand_encoder_c_dim).cuda())
+        p0_z = dist.Normal(torch.zeros(self.hand_encoder_c_dim).to(device), torch.ones(self.hand_encoder_c_dim).to(device))
         kl_loss = dist.kl_divergence(q_z, p0_z)
 
         latent_hand = z_hand.repeat_interleave(self.num_samp_per_scene, dim=0)
@@ -255,15 +256,15 @@ class ModelTwoEncodersOneDecoderVAE(nn.Module):
             x_hand = self.encoder_hand(x_hand, x_obj)
             mean_z = x_hand[:, :self.hand_encoder_c_dim]  # first half
             logstd_z = x_hand[:, self.hand_encoder_c_dim:]  # second half
-            std_z = torch.zeros(x_obj.size()).cuda()
+            std_z = torch.zeros(x_obj.size()).to(device)
             q_z = dist.Normal(mean_z, torch.exp(logstd_z))
 
             z_hand = mean_z
         else:
             batch_size = x_obj.size(0)
-            mean_z = torch.empty(batch_size, 0).cuda()
-            std_z = torch.empty(batch_size, 0).cuda()
-            q_z = dist.Normal(torch.zeros(x_obj.size()).cuda(), torch.ones(x_obj.size()).cuda())
+            mean_z = torch.empty(batch_size, 0).to(device)
+            std_z = torch.empty(batch_size, 0).to(device)
+            q_z = dist.Normal(torch.zeros(x_obj.size()).to(device), torch.ones(x_obj.size()).to(device))
             z_hand = q_z.rsample()
 
         latent = torch.cat([z_hand, x_obj], 1)
@@ -423,7 +424,7 @@ class ShapeAssemblyDecoder(nn.Module):
         if self.predict_pose:
             return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_translation, predicted_quaternion
         else:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda(), torch.Tensor([0]).cuda()
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
 
 class CombinedDecoder(nn.Module):
     def __init__(
@@ -544,7 +545,7 @@ class CombinedDecoder(nn.Module):
         if self.use_classifier:
             return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_class
         else:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda()
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).to(device)
 
 
 class ModelOneEncodersOneDecoder(nn.Module):
