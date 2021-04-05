@@ -1,6 +1,6 @@
 {
     "Description" : "Hand-object together, test point cloud input",
-    "DataSource" : "~/mesh_output",
+    "DataSource" : "/home/andrej/mesh_output",
     "ImageSource" : "",
     "TrainSplit" : "./shape_assembly/train_split.json",
     "ValSplit" : "./shape_assembly/test_split.json",
@@ -32,7 +32,7 @@
     "NumEpochs" : 1600,
     "LatentSize": 512,
     "ValFrequency" : 50,
-    "SnapshotFrequency" : 5,
+    "SnapshotFrequency" : 50,
     "AdditionalSnapshots" : [ 100, 500 ],
     "LearningRateSchedule" : [
         { 
