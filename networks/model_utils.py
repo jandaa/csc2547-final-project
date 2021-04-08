@@ -7,7 +7,7 @@ import networks.model as arch
 # from utils.misc import get_spec_with_default
 # from networks.model_utils import get_model
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 def get_spec_with_default(specs, key, default):
     try:

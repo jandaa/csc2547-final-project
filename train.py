@@ -27,7 +27,13 @@ from torchvision import datasets, models, transforms
 import networks.model as arch
 import utils
 
-device = torch.device('cpu')
+device = torch.device('cuda')
+
+# Reprojection loss scalling
+alpha = 100000
+
+loss_l1 = torch.nn.L1Loss(reduction='sum')
+loss_l1_avg = torch.nn.L1Loss(reduction='mean')
 
 class LearningRateSchedule:
     def get_learning_rate(self, epoch):
@@ -752,7 +758,7 @@ def main_function(experiment_directory, continue_from, batch_split):
     writer.close()
 
 
-def shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_per_batch):
+def shape_assembly_val_function(part1, part2, gt_transformed_part1_points, encoder_decoder, subsample, scene_per_batch):
 
         samples = part2["sdf_samples"]
 
@@ -765,36 +771,28 @@ def shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_
         xyzs = sdf_data[:, 0:3]
         sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
         sdf_gt_part2 = sdf_data[:, 4].unsqueeze(1)
-        
-        part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).to(device)
 
-        _, _, predicted_translation, predicted_rotation = encoder_decoder(
-                                                part1["surface_points"].to(device), 
-                                                part2["surface_points"].to(device), 
-                                                xyzs,
-                                                part1_transform_vec
-                                            )
+        sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
+                                        part1["surface_points"].to(device), 
+                                        part2["surface_points"].to(device), 
+                                        xyzs
+                                    )
 
-        #apply the predicted transformation to the points
-        #Should return Nx3 transformed points
+        predicted_translation = predicted_translation.to("cpu")
+        predicted_rotation = predicted_rotation.to("cpu")
+        part1["surface_points"] = part1["surface_points"].to("cpu")
+        # #apply the predicted transformation to the points
+        # #Should return Nx3 transformed points
+
         predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
         predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
-        predicted_rotation = predicted_rotation.to(device)
-        part1["surface_points"] = part1["surface_points"].to(device)
         predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
-        predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation)
-        
-        # compute loses
-        # loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
-        # loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
-        
-        # loss_transformation = 100 * loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
+        predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points,predicted_translation).detach()
 
-        # loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
+        sdf_loss = loss_l1(sdf_pred_part1, sdf_gt_part1) + loss_l1(sdf_pred_part2, sdf_gt_part2)
+        reprojection_loss = loss_l1_avg(gt_transformed_part1_points, predicted_transformed_part1_interface_points)
 
-        val_metric = loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
-
-        return val_metric.item()
+        return alpha * reprojection_loss, sdf_loss
 
 def shape_assembly_main_function(experiment_directory, continue_from, batch_split):
 
@@ -902,9 +900,6 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     logging.debug("torch num_threads: {}".format(torch.get_num_threads()))
     logging.debug(encoder_decoder)
 
-    loss_l1 = torch.nn.L1Loss(reduction='sum')
-    loss_l1_avg = torch.nn.L1Loss(reduction='mean')
-
     optimizer_all = torch.optim.Adam(
         [
             {
@@ -950,7 +945,8 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         #signify to model we are training
         encoder_decoder.train()
 
-        total_loss = 0
+        total_sdf_loss = 0
+        total_transformation_loss = 0
 
         for i, (
             part1,
@@ -971,7 +967,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     subsample * scene_per_batch, 5
                 )
 
-                part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).to(device)
+                # part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).to(device)
                 
                 xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
@@ -980,8 +976,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
                                                         part1["surface_points"].to(device), 
                                                         part2["surface_points"].to(device), 
-                                                        xyzs,
-                                                        part1_transform_vec
+                                                        xyzs
                                                     )
 
                 #apply the predicted transformation to the points
@@ -993,15 +988,15 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
                 predicted_transformed_part1_points = torch.add(predicted_rotated_part1_points,predicted_translation)
 
-                # compute loses
-                # loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
-                # loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
+                 # compute loses
+                loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
+                loss_sdf_part2 = loss_l1(sdf_pred_part2, sdf_gt_part2)
                 
-                # loss_transformation = 100 * loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
+                loss_transformation = alpha * loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
 
-                # loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
+                loss = loss_sdf_part1 + loss_sdf_part2 + loss_transformation
 
-                loss = loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
+                # loss = loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_points)
 
                 loss.backward()
 
@@ -1013,12 +1008,14 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     )
                 )
 
-                total_loss += loss.item()
+                total_sdf_loss += (loss_sdf_part1 + loss_sdf_part2).item()
+                total_transformation_loss += loss_transformation.item()
                 
 
             optimizer_all.step()
         
-        writer.add_scalar('training_loss', total_loss, (epoch-1))
+        writer.add_scalar('training_sdf_loss', total_sdf_loss / len(sdf_loader), (epoch-1))
+        writer.add_scalar('training_transformation_loss', total_transformation_loss / len(sdf_loader), (epoch-1))
 
         end = time.time()
 
@@ -1040,25 +1037,33 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
             #signify to model we are not training but evaluating.
             encoder_decoder.eval()
 
-            total_validation_error = 0
+
             avg_val_loss = 0.0
+            avg_val_sdf_loss = 0.0
+            avg_val_reprojection_loss = 0.0
+
             # Run validation
             for i, (
                 part1,
                 part2,
                 gt_transformed_part1_points,
                 gt_transform) in enumerate(sdf_val_loader):
+                
+                reprojection_loss, sdf_loss = shape_assembly_val_function(part1, part2, gt_transformed_part1_points, encoder_decoder, subsample, scene_per_batch)
 
-                avg_val_loss += shape_assembly_val_function(part1, part2, encoder_decoder, subsample, scene_per_batch)
-            
-            # writer.add_scalar('validation_metric_1e-3', total_validation_error * 1000.0, (epoch-1))
-            # logging.info(f"Epoch {epoch}: Validation Metric: {total_validation_error}")
+                avg_val_sdf_loss += sdf_loss
+                avg_val_reprojection_loss += reprojection_loss
+                avg_val_loss += reprojection_loss + sdf_loss
 
-            # avg_val_loss = avg_val_loss / len(sdf_val_loader)
+            avg_val_sdf_loss = avg_val_sdf_loss / len(sdf_val_loader)
+            avg_val_reprojection_loss = avg_val_reprojection_loss / len(sdf_val_loader)
+            avg_val_loss = avg_val_loss / len(sdf_val_loader)
 
             writer.add_scalar('validation_loss', avg_val_loss, (epoch-1))
             logging.info(f"Epoch {epoch}: Validation Loss: {avg_val_loss}")
 
+            writer.add_scalar('validation_reprojection_loss', avg_val_reprojection_loss, (epoch-1))
+            writer.add_scalar('validation_sdf_loss', avg_val_sdf_loss, (epoch-1))
 
 if __name__ == "__main__":
 

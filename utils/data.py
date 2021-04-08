@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion
 from dataclasses import dataclass
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 class PointCloudInput(torch.utils.data.Dataset):
     def __init__(
@@ -156,44 +156,13 @@ def unpack_sdf_samples(filename, subsample=None, hand=True, clamp=None, filter_d
     return samples, labels
 
 def unpack_sdf_samples_shape_assembly(filename, subsample=None, hand=True, clamp=None, filter_dist=False):
-    npz = np.load(filename)
-    if subsample is None:
-        return npz
-    try:
-        pos_tensor = remove_nans(torch.from_numpy(npz["pos"]))
-        neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
-        pos_sdf_other = torch.from_numpy(npz["pos_other"])
-        neg_sdf_other = torch.from_numpy(npz["neg_other"])
-    except Exception as e:
-        print("fail to load {}, {}".format(filename, e))
-    ### make it (x,y,z,sdf_to_hand,sdf_to_obj)
+    npz = np.genfromtxt(str(filename), delimiter=',', dtype=np.float32)
+    npz = torch.from_numpy(npz)
 
-    xyz_pos = pos_tensor[:, :3]
-    sdf_pos = pos_tensor[:, 3].unsqueeze(1)
-    #5 columns: xyz, sdf hand, sdf object
-    pos_tensor = torch.cat([xyz_pos, pos_sdf_other, sdf_pos], 1)
-
-    xyz_neg = neg_tensor[:, :3]
-    sdf_neg = neg_tensor[:, 3].unsqueeze(1)
-    neg_tensor = torch.cat([xyz_neg, neg_sdf_other, sdf_neg], 1)
-
-    # split the sample into half
-    half = int(subsample / 2)
-
-    if filter_dist:
-        pos_tensor = filter_invalid_sdf_ShapeAssembly(pos_tensor, 2.0)
-        neg_tensor = filter_invalid_sdf_ShapeAssembly(neg_tensor, 2.0)
-
-    random_pos = (torch.rand(half) * pos_tensor.shape[0]).long()
-    random_neg = (torch.rand(half) * neg_tensor.shape[0]).long()
-
-    sample_pos = torch.index_select(pos_tensor, 0, random_pos)
-    sample_neg = torch.index_select(neg_tensor, 0, random_neg)
-
-    samples = torch.cat([sample_pos, sample_neg], 0)
-
+    random_sample = (torch.rand(subsample) * npz.shape[0]).long()
+    samples = torch.index_select(npz, 0, random_sample)
+    
     return samples
-
 
 def get_instance_filenames(data_source, input_type, encoder_input_source, split, check_file=True, fhb=False, dataset_name="obman"):
     unusable_count = 0
@@ -260,12 +229,8 @@ def get_shape_assembly_filenames(data_source: Path, scenes):
         data_source / scene / "partB.obj"
         for scene in scenes
     ]
-    part1_filenames = [
-        data_source / scene / "partA.npz"
-        for scene in scenes
-    ]
-    part2_filenames = [
-        data_source / scene / "partB.npz"
+    sdf_filenames = [
+        data_source / scene / "sdf.csv"
         for scene in scenes
     ]
     transform_filenames = [
@@ -282,8 +247,7 @@ def get_shape_assembly_filenames(data_source: Path, scenes):
     ]
     
     return (
-        part1_filenames, 
-        part2_filenames, 
+        sdf_filenames, 
         transform_filenames, 
         part1_interface_filenames, 
         part2_interface_filenames,
@@ -291,21 +255,15 @@ def get_shape_assembly_filenames(data_source: Path, scenes):
         part2_mesh_filenames
     )
 
-def get_negative_surface_points(filename=None, pc_sample=500, surface_dist=0.005, data=None):
+def get_negative_surface_points(filename=None, sdf_ind=0, pc_sample=500, surface_dist=0.005, data=None):
 
-    if filename:
-        npz = np.load(filename)
-    else:
-        npz = data
-    try:
-        neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
-    except Exception as e:
-        print("fail to load {}, {}".format(filename, e))
+    npz = np.genfromtxt(str(filename), delimiter=',', dtype=np.float32)
 
-    neg_tensor = romove_higher_dist(neg_tensor, surface_dist)
+    surface_points = npz[:, 3 + sdf_ind] < surface_dist
+    surface_points = torch.from_numpy(npz[surface_points])[:,0:3]
 
-    random_neg = (torch.rand(pc_sample) * neg_tensor.shape[0]).long()
-    sample_neg = torch.index_select(neg_tensor, 0, random_neg)
+    random_neg = (torch.rand(pc_sample) * surface_points.shape[0]).long()
+    sample_neg = torch.index_select(surface_points, 0, random_neg)
 
     return sample_neg
 
@@ -480,8 +438,7 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         self.pc_sample = pc_sample
         self.model_type = model_type
 
-        (self.part1_filenames,
-         self.part2_filenames,
+        (self.sdf_filenames,
          self.transform_filenames,
          self.part1_interface_filenames,
          self.part2_interface_filenames,
@@ -492,11 +449,10 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         self.clamp = clamp
 
     def __len__(self):
-        return len(self.part1_filenames)
+        return len(self.sdf_filenames)
 
     def __getitem__(self, idx):
-        part1_filename = self.part1_filenames[idx]
-        part2_filename = self.part2_filenames[idx]
+        sdf_filename = self.sdf_filenames[idx]
         part1_interface_filename = self.part1_interface_filenames[idx]
         part2_interface_filename = self.part2_interface_filenames[idx]
         transform_filename = self.transform_filenames[idx]
@@ -511,31 +467,31 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         gt_transform = np.genfromtxt(str(transform_filename), delimiter=',')
         
         #Sample points within epsilon of surface (negative signed distance values)
-        part1["surface_points"] = get_negative_surface_points(part1_filename, self.pc_sample)
-        part2["surface_points"] = get_negative_surface_points(part2_filename, self.pc_sample)
+        part1["surface_points"] = get_negative_surface_points(sdf_filename, 0, self.pc_sample)
+        part2["surface_points"] = get_negative_surface_points(sdf_filename, 1, self.pc_sample)
 
         part1["interface_points"] = np.genfromtxt(str(part1_interface_filename), delimiter=',', dtype=np.float64)
         part2["interface_points"] = np.genfromtxt(str(part2_interface_filename), delimiter=',', dtype=np.float64)
 
-        part1["sdf_samples"] = unpack_sdf_samples_shape_assembly(part1_filename, self.subsample, clamp=self.clamp)
-        part2["sdf_samples"] = unpack_sdf_samples_shape_assembly(part2_filename, self.subsample, clamp=self.clamp)
+        part1["sdf_samples"] = unpack_sdf_samples_shape_assembly(sdf_filename, self.subsample, clamp=self.clamp)
+        part2["sdf_samples"] = unpack_sdf_samples_shape_assembly(sdf_filename, self.subsample, clamp=self.clamp)
         
         #Don't need to return the transform, just the transformed points.
         #this part should be well aligned with part2 after the transformation
         #assuming transformation is for column vectors
 
-        #this transform is 4x4 so need the surface points to also have a 1 appended to them.
-        #assuming the surface_points is N x 3 create an Nx1 ones vector and concat
-        gt_transformed_part1_points = np.dot(part1["surface_points"], gt_transform[0:3,0:3]) + gt_transform[0:3,3]
+        # this transform is 4x4 so need the surface points to also have a 1 appended to them.
+        # assuming the surface_points is N x 3 create an Nx1 ones vector and concat
+        gt_transformed_part1_points = np.dot(part1["surface_points"][:,0:3], gt_transform[0:3,0:3].T) + gt_transform[0:3,3]
         gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
 
-        # Compute object center
-        part1["center"] = compute_center(part1["surface_points"])
-        part2["center"] = compute_center(part2["surface_points"])
+        # # Compute object center
+        # part1["center"] = compute_center(part1["surface_points"])
+        # part2["center"] = compute_center(part2["surface_points"])
 
-        # compute rotation matrices
-        part1["quaternion"] = compute_rotation_quanternion(part1["surface_points"])
-        part2["quaternion"] = compute_rotation_quanternion(part2["surface_points"])
+        # # compute rotation matrices
+        # part1["quaternion"] = compute_rotation_quanternion(part1["surface_points"])
+        # part2["quaternion"] = compute_rotation_quanternion(part2["surface_points"])
         
         return (
             part1,
