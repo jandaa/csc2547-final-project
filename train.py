@@ -29,6 +29,7 @@ import networks.model as arch
 import utils
 
 device = torch.device('cuda')
+translation_only = False
 
 # Reprojection loss scalling
 alpha = 100000
@@ -786,9 +787,13 @@ def shape_assembly_val_function(part1, part2, gt_transformed_part1_points, encod
         # #Should return Nx3 transformed points
 
         predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
-        # predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
-        # predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
-        predicted_transformed_part1_interface_points = torch.add(part1["surface_points"], predicted_translation).detach()
+        if translation_only:
+            predicted_transformed_part1_interface_points = torch.add(part1["surface_points"], predicted_translation).detach()
+        else:
+            predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
+            predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
+            predicted_transformed_part1_interface_points = torch.add(predicted_rotated_part1_points, predicted_translation).detach()
+
 
         sdf_loss = loss_l1(sdf_pred_part1, sdf_gt_part1) + loss_l1(sdf_pred_part2, sdf_gt_part2)
         reprojection_loss = loss_l1_avg(gt_transformed_part1_points.to(device), predicted_transformed_part1_interface_points.to(device))
@@ -944,22 +949,6 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         #signify to model we are training
         encoder_decoder.train()
 
-        avg_val_loss = 0.0
-        avg_val_sdf_loss = 0.0
-        avg_val_reprojection_loss = 0.0
-
-        # Run validation
-        for i, (
-            part1,
-            part2,
-            gt_transformed_part1_points,
-            gt_transform) in enumerate(sdf_val_loader):
-            
-            reprojection_loss, sdf_loss = shape_assembly_val_function(part1, part2, gt_transformed_part1_points, encoder_decoder, subsample, scene_per_batch)
-
-            avg_val_sdf_loss += sdf_loss
-            avg_val_reprojection_loss += reprojection_loss
-            avg_val_loss += reprojection_loss + sdf_loss
 
         total_sdf_loss = 0
         total_transformation_loss = 0
@@ -995,14 +984,12 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                                                         xyzs
                                                     )
 
-                #apply the predicted transformation to the points
-                #Should return Nx3 transformed points
-                predicted_translation = predicted_translation.reshape((predicted_translation.shape[0], 1, 3))
-                # predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
-                # predicted_rotation = predicted_rotation.to(device)
-                part1["surface_points"] = part1["surface_points"].to(device)
-                # predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
-                predicted_transformed_part1_points = torch.add(part1["surface_points"], predicted_translation)
+                if translation_only:
+                    predicted_transformed_part1_interface_points = torch.add(part1["surface_points"], predicted_translation).detach()
+                else:
+                    predicted_rotation = predicted_rotation.reshape((predicted_rotation.shape[0], 1, 4))
+                    predicted_rotated_part1_points = quaternion_apply(predicted_rotation, part1["surface_points"])
+                    predicted_transformed_part1_points = torch.add(predicted_rotated_part1_points, predicted_translation).detach()
 
                  # compute loses
                 loss_sdf_part1 = loss_l1(sdf_pred_part1, sdf_gt_part1)
