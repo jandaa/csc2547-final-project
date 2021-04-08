@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch import distributions as dist
 from torchvision import datasets, models, transforms
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)

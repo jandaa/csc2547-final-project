@@ -31,7 +31,7 @@ import utils
 import open3d as o3d
 import plotly.graph_objects as go
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 def get_spec_with_default(specs, key, default):
     try:
@@ -39,7 +39,7 @@ def get_spec_with_default(specs, key, default):
     except KeyError:
         return default
 
-def shape_assembly_visualization_function(part1, part2, encoder_decoder, subsample, scene_per_batch):
+def shape_assembly_visualization_function(part1, part2, gt_transform, encoder_decoder, subsample, scene_per_batch):
 
         samples = part2["sdf_samples"]
 
@@ -73,6 +73,18 @@ def shape_assembly_visualization_function(part1, part2, encoder_decoder, subsamp
 
         o3d.visualization.draw_geometries([mesh1, mesh2])
 
+        new_mesh = copy.deepcopy(mesh1)
+        gt_transform = gt_transform[0].numpy()
+        new_mesh.transform(gt_transform)
+        new_mesh.rotate(gt_transform[0:3,0:3].T)
+        # for i in range(len(new_mesh.vertices)):
+        #     new_mesh.vertices[i] = new_mesh.vertices[i] - np.dot(gt_transform[0:3,0:3].T, gt_transform[0:3,3])
+        #     new_mesh.vertices[i] = np.dot(gt_transform[0:3,0:3].T, new_mesh.vertices[i])
+        
+        new_mesh.compute_vertex_normals()
+
+        o3d.visualization.draw_geometries([new_mesh, mesh2])
+
         predicted_rotation = quaternion_to_matrix(predicted_rotation)
 
         predicted_rotation = predicted_rotation.detach()
@@ -89,10 +101,7 @@ def shape_assembly_visualization_function(part1, part2, encoder_decoder, subsamp
             # Rotate mesh1 to be aligned with mesh2
             new_mesh = copy.deepcopy(mesh1)
 
-            for i in range(len(new_mesh.vertices)):
-                new_mesh.vertices[i] = np.dot(new_mesh.vertices[i], predicted_rotation[point_ind].numpy()) + predicted_translation[point_ind].numpy()
-
-            # new_mesh = new_mesh.transform(transformation)
+            new_mesh = new_mesh.transform(transformation)
             o3d.visualization.draw_geometries([new_mesh, mesh2])
 
         return
@@ -120,9 +129,16 @@ def run_visualization(experiment_directory, checkpoint):
     with open(val_split_file, "r") as f:
         val_split = json.load(f)
 
-    # sdf_dataset = utils.data.SDFAssemblySamples(data_source, train_split, subsample)
+    sdf_dataset = utils.data.SDFAssemblySamples(data_source, train_split, subsample)
     sdf_val_dataset = utils.data.SDFAssemblySamples(data_source, val_split, subsample)
 
+    sdf_loader = data_utils.DataLoader(
+        sdf_dataset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=num_data_loader_threads,
+        drop_last=True
+    )
     sdf_val_loader = data_utils.DataLoader(
         sdf_val_dataset,
         batch_size=1,
@@ -166,7 +182,7 @@ def run_visualization(experiment_directory, checkpoint):
         gt_transformed_part1_points,
         gt_transform) in enumerate(sdf_val_loader):
 
-            shape_assembly_visualization_function(part1, part2, encoder_decoder, subsample, scene_per_batch)
+            shape_assembly_visualization_function(part1, part2, gt_transform, encoder_decoder, subsample, scene_per_batch)
 
 if __name__ == "__main__":
 

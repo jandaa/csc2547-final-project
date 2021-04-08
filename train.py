@@ -27,7 +27,7 @@ from torchvision import datasets, models, transforms
 import networks.model as arch
 import utils
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 # Reprojection loss scalling
 alpha = 100000

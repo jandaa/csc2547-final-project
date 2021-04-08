@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion
 from dataclasses import dataclass
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 class PointCloudInput(torch.utils.data.Dataset):
     def __init__(
