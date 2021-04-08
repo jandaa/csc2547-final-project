@@ -502,8 +502,8 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part1["interface_points"] = self.part1_interface_points[idx]
         part2["interface_points"] = self.part2_interface_points[idx]
 
-        part1["sdf_samples"] = self.self.sdf_samples[idx]
-        part2["sdf_samples"] = self.self.sdf_samples[idx]
+        part1["sdf_samples"] = self.sdf_samples[idx]
+        part2["sdf_samples"] = self.sdf_samples[idx]
         
         #Don't need to return the transform, just the transformed points.
         #this part should be well aligned with part2 after the transformation
