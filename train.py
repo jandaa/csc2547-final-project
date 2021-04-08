@@ -29,7 +29,7 @@ import networks.model as arch
 import utils
 
 device = torch.device('cuda')
-translation_only = True
+translation_only = False
 
 # Reprojection loss scalling
 alpha = 100000
