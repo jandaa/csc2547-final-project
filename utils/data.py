@@ -445,6 +445,35 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
          self.part1_mesh_filenames,
          self.part2_mesh_filenames) = get_shape_assembly_filenames(data_source, split)
 
+        self.part1_surface_points = [
+            get_negative_surface_points(self.sdf_filenames[i], 0, self.pc_sample)
+            for i in range(len(self.sdf_filenames))
+        ]
+
+        self.part2_surface_points = [
+            get_negative_surface_points(self.sdf_filenames[i], 1, self.pc_sample)
+            for i in range(len(self.sdf_filenames))
+        ]
+        
+        self.part1_interface_points = [
+            np.genfromtxt(str(self.part1_interface_filenames[i]), delimiter=',', dtype=np.float64)
+            for i in range(len(self.sdf_filenames))
+        ]
+        self.part2_interface_points = [
+            np.genfromtxt(str(self.part2_interface_filenames[i]), delimiter=',', dtype=np.float64)
+            for i in range(len(self.sdf_filenames))
+        ]
+
+        self.gt_transforms = [
+            np.genfromtxt(str(self.transform_filenames[i]), delimiter=',')
+            for i in range(len(self.sdf_filenames))
+        ]
+
+        self.sdf_samples = [
+            unpack_sdf_samples_shape_assembly(self.sdf_filenames[i], self.subsample, clamp=self.clamp)
+            for i in range(len(self.sdf_filenames))
+        ]
+
         self.same_point = same_point
         self.clamp = clamp
 
@@ -464,17 +493,17 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         part2["mesh_filename"] = str(self.part2_mesh_filenames[idx])
 
         #ground truth transform, when applied to the part1 (aka partA) points they should be well aligned with part2 (aka partB)
-        gt_transform = np.genfromtxt(str(transform_filename), delimiter=',')
+        gt_transform = self.gt_transforms[idx]
         
         #Sample points within epsilon of surface (negative signed distance values)
-        part1["surface_points"] = get_negative_surface_points(sdf_filename, 0, self.pc_sample)
-        part2["surface_points"] = get_negative_surface_points(sdf_filename, 1, self.pc_sample)
+        part1["surface_points"] = self.part1_surface_points[idx]
+        part2["surface_points"] = self.part2_surface_points[idx]
 
-        part1["interface_points"] = np.genfromtxt(str(part1_interface_filename), delimiter=',', dtype=np.float64)
-        part2["interface_points"] = np.genfromtxt(str(part2_interface_filename), delimiter=',', dtype=np.float64)
+        part1["interface_points"] = self.part1_interface_points[idx]
+        part2["interface_points"] = self.part2_interface_points[idx]
 
-        part1["sdf_samples"] = unpack_sdf_samples_shape_assembly(sdf_filename, self.subsample, clamp=self.clamp)
-        part2["sdf_samples"] = unpack_sdf_samples_shape_assembly(sdf_filename, self.subsample, clamp=self.clamp)
+        part1["sdf_samples"] = self.self.sdf_samples[idx]
+        part2["sdf_samples"] = self.self.sdf_samples[idx]
         
         #Don't need to return the transform, just the transformed points.
         #this part should be well aligned with part2 after the transformation
@@ -484,14 +513,6 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
         # assuming the surface_points is N x 3 create an Nx1 ones vector and concat
         gt_transformed_part1_points = np.dot(part1["surface_points"][:,0:3], gt_transform[0:3,0:3].T) + gt_transform[0:3,3]
         gt_transformed_part1_points = torch.from_numpy(gt_transformed_part1_points)
-
-        # # Compute object center
-        # part1["center"] = compute_center(part1["surface_points"])
-        # part2["center"] = compute_center(part2["surface_points"])
-
-        # # compute rotation matrices
-        # part1["quaternion"] = compute_rotation_quanternion(part1["surface_points"])
-        # part2["quaternion"] = compute_rotation_quanternion(part2["surface_points"])
         
         return (
             part1,
