@@ -11,8 +11,6 @@ from threading import Thread
 from pathlib import Path
 
 # Headless mesh to sdf
-os.environ['PYOPENGL_PLATFORM'] = 'egl'
-from mesh_to_sdf import mesh_to_sdf
 import trimesh
 
 import numpy as np
