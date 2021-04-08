@@ -824,8 +824,11 @@ int main(int argc, char **argv) {
   // SaveNormalizationParamsToNPZ(
   //   (-1 * center), (1.f / max_dist_before_normalize), normalizationOutputFile);
 
-  float max_dist = NormalizationWithParams(geom, center, max_dist_before_normalize, true);
-  float max_dist_2 = NormalizationWithParams(geomObj, center, max_dist_before_normalize, true);
+  float max_dist = max_dist_before_normalize
+  float max_dist_2 = max_dist_before_normalize
+
+  // float max_dist = NormalizationWithParams(geom, center, max_dist_before_normalize, true);
+  // float max_dist_2 = NormalizationWithParams(geomObj, center, max_dist_before_normalize, true);
 
   std::cout << "max dist " << max_dist << std::endl;
 

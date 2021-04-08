@@ -24,6 +24,9 @@ from torch import distributions as dist
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, models, transforms
 
+from scipy.spatial.transform import Rotation
+import utils
+
 import networks.model as arch
 import utils
 
@@ -799,12 +802,10 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
     def save_latest(epoch):
         save_model(experiment_directory, "latest.pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, "latest.pth", optimizer_all, epoch)
-        # save_latent_vectors(experiment_directory, "latest.pth", lat_vecs, epoch)
 
     def save_checkpoints(epoch):
         save_model(experiment_directory, str(epoch) + ".pth", encoder_decoder, epoch)
         save_optimizer(experiment_directory, str(epoch) + ".pth", optimizer_all, epoch)
-        # save_latent_vectors(experiment_directory, str(epoch) + ".pth", lat_vecs, epoch)
 
     def signal_handler(sig, frame):
         logging.info("Stopping early...")
@@ -888,7 +889,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
         encoder_part2,
         decoder,
         nb_classes,
-        subsample
+        subsample,
     )
     encoder_decoder = encoder_decoder.to(device)
     encoder_decoder.share_memory()
