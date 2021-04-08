@@ -445,6 +445,9 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
          self.part1_mesh_filenames,
          self.part2_mesh_filenames) = get_shape_assembly_filenames(data_source, split)
 
+        self.same_point = same_point
+        self.clamp = clamp
+
         self.part1_surface_points = [
             get_negative_surface_points(self.sdf_filenames[i], 0, self.pc_sample)
             for i in range(len(self.sdf_filenames))
@@ -473,9 +476,6 @@ class SDFAssemblySamples(torch.utils.data.Dataset):
             unpack_sdf_samples_shape_assembly(self.sdf_filenames[i], self.subsample, clamp=self.clamp)
             for i in range(len(self.sdf_filenames))
         ]
-
-        self.same_point = same_point
-        self.clamp = clamp
 
     def __len__(self):
         return len(self.sdf_filenames)
