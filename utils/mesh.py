@@ -54,7 +54,7 @@ def create_mesh_combined_decoder(
     # print(latent_vec, latent_vec.size())
     while head < num_samples:
 
-        sample_subset = samples[head : min(head + max_batch, num_samples), 0:3].cuda()
+        sample_subset = samples[head : min(head + max_batch, num_samples), 0:3].to(device)
         sdf_hand, sdf_obj, predicted_class = utils.utils.decode_sdf_multi_output(decoder, latent_vec, sample_subset)
         samples[head : min(head + max_batch, num_samples), 3] = sdf_hand.squeeze(1).detach().cpu()
         samples[head : min(head + max_batch, num_samples), 4] = sdf_obj.squeeze(1).detach().cpu()
@@ -97,7 +97,7 @@ def create_mesh_combined_decoder(
     head = 0
     while head < num_samples:
 
-        sample_subset = samples_hr[head : min(head + max_batch, num_samples), 0:3].cuda()
+        sample_subset = samples_hr[head : min(head + max_batch, num_samples), 0:3].to(device)
         sdf_hand, sdf_obj, predicted_class = utils.utils.decode_sdf_multi_output(decoder, latent_vec, sample_subset)
         samples_hr[head : min(head + max_batch, num_samples), 3] = sdf_hand.squeeze(1).detach().cpu()
         samples_hr[head : min(head + max_batch, num_samples), 4] = sdf_obj.squeeze(1).detach().cpu()
@@ -135,7 +135,7 @@ def create_mesh_combined_decoder(
 
             head = 0
             while head < num_out_vertices:
-                sample_subset = vertices[head: min(head + max_batch, num_out_vertices), 0:3].cuda()
+                sample_subset = vertices[head: min(head + max_batch, num_out_vertices), 0:3].to(device)
                 sdf_hand, sdf_obj, predicted_class = utils.utils.decode_sdf_multi_output(decoder, latent_vec, sample_subset)
                 out_labels[head: min(head + max_batch, num_out_vertices)] = predicted_class.argmax(dim=1).detach().cpu()
                 head += max_batch

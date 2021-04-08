@@ -123,7 +123,6 @@ if __name__ == "__main__":
 
     executable = str(Path.cwd() / "scripts/sample_points/bin/PreprocessMesh")
     extension = ".npz"
-    transform_filename = "transform.csv"
     commands = []
 
     target_dir = Path(args.data_dir)
@@ -139,8 +138,13 @@ if __name__ == "__main__":
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # copy over mesh
+        shutil.copy(input_partA, output_dir / "partA.obj")
+        shutil.copy(input_partB, output_dir / "partB.obj")
+
         # copy over transformation
-        shutil.copy(obj_dir / transform_filename, output_dir / transform_filename)
+        for csv_file in obj_dir.glob("**/*.csv"):
+            shutil.copy(obj_dir / csv_file.name, output_dir / csv_file.name)
 
         commands.append(
             (

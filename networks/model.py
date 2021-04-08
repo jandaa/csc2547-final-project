@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch import distributions as dist
 from torchvision import datasets, models, transforms
 
+device = torch.device('cuda')
 
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)
@@ -227,13 +228,13 @@ class ModelTwoEncodersOneDecoderVAE(nn.Module):
             logstd_z = x_hand[:, self.hand_encoder_c_dim:]  # second half
         else:
             batch_size = x_obj.size(0)
-            mean_z = torch.empty(batch_size, 0).cuda()
-            logstd_z = torch.empty(batch_size, 0).cuda()
+            mean_z = torch.empty(batch_size, 0).to(device)
+            logstd_z = torch.empty(batch_size, 0).to(device)
         q_z = dist.Normal(mean_z, torch.exp(logstd_z))
         z_hand = q_z.rsample()
 
         # KL-divergence
-        p0_z = dist.Normal(torch.zeros(self.hand_encoder_c_dim).cuda(), torch.ones(self.hand_encoder_c_dim).cuda())
+        p0_z = dist.Normal(torch.zeros(self.hand_encoder_c_dim).to(device), torch.ones(self.hand_encoder_c_dim).to(device))
         kl_loss = dist.kl_divergence(q_z, p0_z)
 
         latent_hand = z_hand.repeat_interleave(self.num_samp_per_scene, dim=0)
@@ -255,15 +256,15 @@ class ModelTwoEncodersOneDecoderVAE(nn.Module):
             x_hand = self.encoder_hand(x_hand, x_obj)
             mean_z = x_hand[:, :self.hand_encoder_c_dim]  # first half
             logstd_z = x_hand[:, self.hand_encoder_c_dim:]  # second half
-            std_z = torch.zeros(x_obj.size()).cuda()
+            std_z = torch.zeros(x_obj.size()).to(device)
             q_z = dist.Normal(mean_z, torch.exp(logstd_z))
 
             z_hand = mean_z
         else:
             batch_size = x_obj.size(0)
-            mean_z = torch.empty(batch_size, 0).cuda()
-            std_z = torch.empty(batch_size, 0).cuda()
-            q_z = dist.Normal(torch.zeros(x_obj.size()).cuda(), torch.ones(x_obj.size()).cuda())
+            mean_z = torch.empty(batch_size, 0).to(device)
+            std_z = torch.empty(batch_size, 0).to(device)
+            q_z = dist.Normal(torch.zeros(x_obj.size()).to(device), torch.ones(x_obj.size()).to(device))
             z_hand = q_z.rsample()
 
         latent = torch.cat([z_hand, x_obj], 1)
@@ -294,6 +295,7 @@ class ModelShapeAssemblyEncoderDecoderVAE(nn.Module):
 
         latent_part1 = part1_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
         latent_part2 = part2_encoding.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
+        # part1_transform_vec_repeated = part1_transform_vec.repeat_interleave(self.num_sdf_samp_per_scene, dim=0)
 
         latent = torch.cat([latent_part1, latent_part2], 1)
         decoder_inputs = torch.cat([latent, xyzs], 1)
@@ -306,6 +308,8 @@ class ShapeAssemblyDecoder(nn.Module):
         latent_size,
         dims,
         num_dof,
+        num_neurons_translation,
+        num_neurons_rotation,
         dropout=None,
         dropout_prob=0.0,
         norm_layers=(),
@@ -317,11 +321,14 @@ class ShapeAssemblyDecoder(nn.Module):
         predict_pose=True,
     ):
         super(ShapeAssemblyDecoder, self).__init__()
-
-        dims = [latent_size + 3] + dims + [2]  # <<<< 2 outputs instead of 1.
+        # the last layer will have 9 neurons: 2 sdf, 3 for translation, 4 for quaternion
+        #the other 7 are stored in pose_head
+        dims = [latent_size + 3] + dims + [2] 
 
         self.num_layers = len(dims)
         self.num_dof = num_dof
+        self.num_neurons_translation = num_neurons_translation
+        self.num_neurons_rotation = num_neurons_rotation
         self.norm_layers = norm_layers
         self.latent_in = latent_in
         self.latent_dropout = latent_dropout
@@ -357,7 +364,8 @@ class ShapeAssemblyDecoder(nn.Module):
                 setattr(self, "bn" + str(layer), nn.LayerNorm(out_dim))
             
             if self.predict_pose and layer == self.num_layers - 2:
-                self.pose_head = nn.Linear(dims[layer], self.num_dof)
+                self.translation_pose_head = nn.Linear(dims[layer], self.num_neurons_translation)
+                self.rotation_pose_head = nn.Linear(dims[layer], self.num_neurons_rotation)
 
 
         self.use_tanh = use_tanh
@@ -375,6 +383,7 @@ class ShapeAssemblyDecoder(nn.Module):
         # Apply dropout only on latent vector
         xyz = input[:, -3:]
         latent_vecs = input[:, :-3]
+        # transformation_vecs = input[:, -10:-3]
         latent_vecs = F.dropout(latent_vecs, p=0.2, training=self.training)
         x = torch.cat([latent_vecs, xyz], 1)
 
@@ -382,7 +391,10 @@ class ShapeAssemblyDecoder(nn.Module):
         for layer in range(0, self.num_layers - 1):
 
             if self.predict_pose and layer == self.num_layers - 2:
-                predicted_pose = self.pose_head(x)
+                predicted_translation = self.translation_pose_head(x)
+                predicted_quaternion = self.rotation_pose_head(x)
+                #Quaternion vector must be unit length
+                predicted_quaternion = F.normalize(predicted_quaternion, p=2, dim=1)
 
             lin = getattr(self, "lin" + str(layer))
             if layer in self.latent_in:
@@ -410,9 +422,9 @@ class ShapeAssemblyDecoder(nn.Module):
 
         # hand, object, class label
         if self.predict_pose:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_pose
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_translation, predicted_quaternion
         else:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda()
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
 
 class CombinedDecoder(nn.Module):
     def __init__(
@@ -533,7 +545,7 @@ class CombinedDecoder(nn.Module):
         if self.use_classifier:
             return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), predicted_class
         else:
-            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).cuda()
+            return x[:, 0].unsqueeze(1), x[:, 1].unsqueeze(1), torch.Tensor([0]).to(device)
 
 
 class ModelOneEncodersOneDecoder(nn.Module):

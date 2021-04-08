@@ -7,6 +7,7 @@ import networks.model as arch
 # from utils.misc import get_spec_with_default
 # from networks.model_utils import get_model
 
+device = torch.device('cuda')
 
 def get_spec_with_default(specs, key, default):
     try:
@@ -77,6 +78,6 @@ def get_model(model_directory, specs, device):
 
     encoderDecoder.load_state_dict(saved_model_state["model_state_dict"])
 
-    encoderDecoder = encoderDecoder.to(device)  # .cuda()
+    encoderDecoder = encoderDecoder.to(device)  # .to(device)
 
     return encoderDecoder  # loaded_model

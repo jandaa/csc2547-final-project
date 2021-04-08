@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+shape_assembly*/
+
 # pyc
 *.pyc
 
@@ -141,3 +143,7 @@ mano/models/
 output/
 input/
 data/
+*.pth
+*.0
+scripts/sample_points/bin/
+scripts/sample_points/third-party/
