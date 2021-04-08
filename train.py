@@ -971,7 +971,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                     subsample * scene_per_batch, 5
                 )
 
-                part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).to(device)
+                # part1_transform_vec = torch.cat((part1["center"], part1["quaternion"]), 1).to(device)
                 
                 xyzs = sdf_data[:, 0:3]
                 sdf_gt_part1 = sdf_data[:, 3].unsqueeze(1)
@@ -980,8 +980,7 @@ def shape_assembly_main_function(experiment_directory, continue_from, batch_spli
                 sdf_pred_part1, sdf_pred_part2, predicted_translation, predicted_rotation = encoder_decoder(
                                                         part1["surface_points"].to(device), 
                                                         part2["surface_points"].to(device), 
-                                                        xyzs,
-                                                        part1_transform_vec
+                                                        xyzs
                                                     )
 
                 #apply the predicted transformation to the points
